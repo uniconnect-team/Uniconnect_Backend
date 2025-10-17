@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Verify your UniConnect student email</title>
+  </head>
+  <body style="font-family: Arial, sans-serif; background: #f9fafb; color: #111827; margin: 0; padding: 0;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center">
+          <table role="presentation" cellpadding="24" cellspacing="0" width="600" style="background: #ffffff; margin-top: 24px; border-radius: 12px;">
+            <tr>
+              <td>
+                <h1 style="color: #10B981;">Verify your student email</h1>
+                <p>Hi {{ name }},</p>
+                <p>
+                  Thanks for joining <strong>UniConnect</strong>! To unlock student-only features, please verify
+                  your {{ university_name }} email address.
+                </p>
+                <p style="margin: 32px 0; text-align: center;">
+                  <a href="{{ verification_url }}" style="background: linear-gradient(135deg, #10B981, #2DD4BF); color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 999px; display: inline-block; font-weight: bold;">
+                    Verify email
+                  </a>
+                </p>
+                <p>This link expires in {{ expires_in_minutes }} minutes.</p>
+                <p>If you didn't request this, you can safely ignore the message.</p>
+                <p style="margin-top: 32px;">Stay connected,<br />UniConnect Team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
