@@ -116,3 +116,14 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
+
+APP_URL = env("APP_URL", default="http://localhost:3000")
+MAIL_FROM = env("MAIL_FROM", default="UniConnect <no-reply@uniconnect.com>")
+VERIFY_TOKEN_TTL_MIN = env.int("VERIFY_TOKEN_TTL_MIN", default=15)
+VERIFY_RESEND_COOLDOWN_SEC = env.int("VERIFY_RESEND_COOLDOWN_SEC", default=60)
+VERIFY_DAILY_LIMIT = env.int("VERIFY_DAILY_LIMIT", default=5)
+VERIFY_MAX_ATTEMPTS = env.int("VERIFY_MAX_ATTEMPTS", default=10)
+VERIFY_LOCKOUT_MIN = env.int("VERIFY_LOCKOUT_MIN", default=30)
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+)

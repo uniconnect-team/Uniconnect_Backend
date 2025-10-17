@@ -6,7 +6,13 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .serializers import LoginSerializer, MeSerializer, RegisterSerializer
+from .serializers import (
+    LoginSerializer,
+    MeSerializer,
+    RegisterSerializer,
+    VerifyEmailConfirmSerializer,
+    VerifyEmailRequestSerializer,
+)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -35,3 +41,34 @@ class MeView(generics.RetrieveAPIView):
 
     def get_object(self):  # type: ignore[override]
         return self.request.user
+
+
+class VerifyEmailRequestView(APIView):
+    """Trigger a new verification email for the authenticated user."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = VerifyEmailRequestSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+        return Response(
+            {
+                "ok": True,
+                "cooldownSeconds": result["cooldown_seconds"],
+                "expiresAt": result["expires_at"].isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class VerifyEmailConfirmView(APIView):
+    """Confirm a verification token received by email."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = VerifyEmailConfirmSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({"ok": True}, status=status.HTTP_200_OK)

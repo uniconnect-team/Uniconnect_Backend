@@ -1,9 +1,16 @@
 """Tests for the users app."""
 from __future__ import annotations
 
+import re
+
+from django.contrib.auth.models import User
+from django.core import mail
+from django.test.utils import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+
+from .models import Profile, UniversityDomain, VerificationToken
 
 
 class AuthFlowTests(APITestCase):
@@ -59,3 +66,87 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("refresh", response.data)
         self.assertEqual(response.data["user"]["phone"], register_payload["phone"])
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class VerifyEmailFlowTests(APITestCase):
+    """Validate the student email verification workflow."""
+
+    def setUp(self) -> None:
+        self.domain, _ = UniversityDomain.objects.get_or_create(
+            domain="mail.aub.edu",
+            defaults={
+                "university_name": "American University of Beirut",
+                "country_code": "LB",
+            },
+        )
+        self.user = User.objects.create_user("student", "student@example.com", "Passw0rd1")
+        Profile.objects.create(
+            user=self.user,
+            full_name="Student User",
+            phone="+96171333000",
+            role=Profile.Roles.SEEKER,
+        )
+
+    def test_request_verification_success(self) -> None:
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            reverse("users:verify-email-request"),
+            {"email": "Name@mail.aub.edu"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["ok"])
+        self.assertIn("cooldownSeconds", response.data)
+        self.assertEqual(len(mail.outbox), 1)
+
+        token = VerificationToken.objects.get(user=self.user)
+        self.assertEqual(token.email, "name@mail.aub.edu")
+        self.assertEqual(token.university_domain, self.domain.domain)
+
+        self.user.refresh_from_db()
+        profile = self.user.profile
+        self.assertFalse(profile.is_student_verified)
+        self.assertIsNone(profile.email_verified_at)
+        self.assertEqual(profile.university_domain, "")
+        self.assertEqual(self.user.email, "name@mail.aub.edu")
+
+    def test_request_verification_enforces_cooldown(self) -> None:
+        self.client.force_authenticate(user=self.user)
+        payload = {"email": "student@mail.aub.edu"}
+        first_response = self.client.post(reverse("users:verify-email-request"), payload, format="json")
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+
+        second_response = self.client.post(reverse("users:verify-email-request"), payload, format="json")
+        self.assertEqual(second_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("wait", " ".join(second_response.data.get("non_field_errors", [])))
+
+    def test_confirm_verification_marks_profile_verified(self) -> None:
+        self.client.force_authenticate(user=self.user)
+        self.client.post(
+            reverse("users:verify-email-request"),
+            {"email": "student@mail.aub.edu"},
+            format="json",
+        )
+        message = mail.outbox[-1]
+        token_match = re.search(r"token=([A-Za-z0-9_\-]+)", message.body)
+        self.assertIsNotNone(token_match)
+        token = token_match.group(1)
+
+        response = self.client.post(
+            reverse("users:verify-email-confirm"),
+            {"token": token},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["ok"])
+
+        profile = Profile.objects.get(user=self.user)
+        self.assertTrue(profile.is_student_verified)
+        self.assertIsNotNone(profile.email_verified_at)
+        self.assertEqual(profile.university_domain, self.domain.domain)
+
+        token_record = VerificationToken.objects.get(user=self.user)
+        self.assertIsNotNone(token_record.consumed_at)
