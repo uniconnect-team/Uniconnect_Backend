@@ -3,11 +3,39 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import Profile
+from .models import EmailVerificationToken, Profile, UniversityDomain
 
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "full_name", "phone", "role", "created_at")
+    list_display = (
+        "id",
+        "user",
+        "full_name",
+        "phone",
+        "role",
+        "is_student_verified",
+        "created_at",
+    )
     search_fields = ("user__username", "user__email", "full_name", "phone")
-    list_filter = ("role",)
+    list_filter = ("role", "is_student_verified")
+
+
+@admin.register(UniversityDomain)
+class UniversityDomainAdmin(admin.ModelAdmin):
+    list_display = ("domain", "university_name", "is_active", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("domain", "university_name")
+
+
+@admin.register(EmailVerificationToken)
+class EmailVerificationTokenAdmin(admin.ModelAdmin):
+    list_display = (
+        "user",
+        "method",
+        "expires_at",
+        "consumed_at",
+        "created_at",
+    )
+    search_fields = ("user__email", "user__username")
+    list_filter = ("method", "consumed_at")
