@@ -183,6 +183,55 @@ class RegisterSerializer(serializers.Serializer):
         }
 
 
+class OwnerRegisterSerializer(RegisterSerializer):
+    """Serializer for dorm owners registering via a private access code."""
+
+    owner_access_code = serializers.CharField(write_only=True)
+    role = serializers.HiddenField(default=Profile.Roles.OWNER)
+
+    def validate_email(self, value: str) -> str:  # noqa: D401 - delegated helper
+        value = _normalize_email(value)
+
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError(
+                _("A user with this email already exists."),
+                code="duplicate_email",
+            )
+
+        domain_value = value.split("@")[-1]
+        domain_obj = (
+            UniversityDomain.objects.filter(domain__iexact=domain_value, is_active=True)
+            .order_by("-created_at")
+            .first()
+        )
+
+        self.context["domain"] = domain_obj
+        return value
+
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:  # noqa: D401 - delegated helper
+        attrs = super().validate(attrs)
+
+        configured_code = getattr(settings, "DORM_OWNER_ACCESS_CODE", "")
+        if not configured_code:
+            raise serializers.ValidationError(
+                {
+                    "owner_access_code": [
+                        _(
+                            "Owner registration is currently unavailable. Please contact support."
+                        ),
+                    ]
+                }
+            )
+
+        supplied_code = attrs.pop("owner_access_code", "")
+        if supplied_code != configured_code:
+            raise serializers.ValidationError(
+                {"owner_access_code": [_("Invalid owner access code provided.")]}
+            )
+
+        return attrs
+
+
 class LoginSerializer(serializers.Serializer):
     """Serializer handling email/phone login."""
 

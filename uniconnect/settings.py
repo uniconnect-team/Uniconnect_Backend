@@ -146,3 +146,6 @@ DEFAULT_FROM_EMAIL = env(
     default=(EMAIL_HOST_USER or "UniConnect <no-reply@uniconnect.local>"),
 )
 SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+
+# Access code required for dorm owner self-registration. Leave blank to disable.
+DORM_OWNER_ACCESS_CODE = env("DORM_OWNER_ACCESS_CODE", default="")
