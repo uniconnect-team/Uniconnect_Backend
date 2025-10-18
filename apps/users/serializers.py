@@ -99,6 +99,48 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError(_("Phone number must be unique."))
         return value
 
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        email = attrs["email"]
+        phone = attrs["phone"]
+        cooldown_seconds = int(getattr(settings, "VERIFY_RESEND_COOLDOWN_SEC", 60))
+        now = timezone.now()
+
+        if Profile.objects.filter(phone=phone).exists():
+            raise serializers.ValidationError(
+                {"phone": [_("Phone number must be unique.")]}
+            )
+
+        pending_conflict = (
+            PendingRegistration.objects.filter(phone=phone)
+            .exclude(email__iexact=email)
+            .exists()
+        )
+        if pending_conflict:
+            raise serializers.ValidationError(
+                {"phone": [_("Phone number must be unique.")]}
+            )
+
+        recent_token = EmailOTP.objects.filter(email=email).order_by("-created_at").first()
+        if recent_token and recent_token.created_at + timedelta(seconds=cooldown_seconds) > now:
+            raise serializers.ValidationError(
+                _("Please wait before requesting a new verification code."),
+                code="cooldown_active",
+            )
+
+        daily_limit = int(getattr(settings, "VERIFY_MAX_DAILY_SENDS", 5))
+        sent_today = EmailOTP.objects.filter(
+            email=email,
+            created_at__gte=now - timedelta(hours=24),
+        ).count()
+        if sent_today >= daily_limit:
+            raise serializers.ValidationError(
+                _("Maximum verification attempts reached. Please try again later."),
+                code="rate_limited",
+            )
+
+        self.context["cooldown"] = cooldown_seconds
+        return attrs
+
     def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
         email: str = validated_data["email"]
         phone: str = validated_data["phone"]

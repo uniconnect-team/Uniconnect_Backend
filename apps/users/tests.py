@@ -30,6 +30,36 @@ class AuthFlowTests(APITestCase):
         data.update(overrides)
         return data
 
+    def _complete_registration(
+        self,
+        role: str = Profile.Roles.SEEKER,
+        email: str = "student@mail.aub.edu",
+    ) -> dict:
+        if not PendingRegistration.objects.filter(email=email).exists():
+            mail.outbox.clear()
+            response = self._register_user(role=role, email=email)
+            self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+            self.assertTrue(response.data["ok"])
+
+        self.assertTrue(PendingRegistration.objects.filter(email=email).exists())
+        self.assertGreater(len(mail.outbox), 0)
+
+        message = mail.outbox[-1]
+        match = re.search(r"(\d{6})", message.body)
+        self.assertIsNotNone(match)
+        code = match.group(1) if match else "000000"
+
+        confirm_response = self.client.post(
+            reverse("users:verify-email-confirm"),
+            {"email": email, "code": code},
+            format="json",
+        )
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(confirm_response.data["ok"])
+        self.assertIn("user", confirm_response.data)
+        self.assertFalse(PendingRegistration.objects.filter(email=email).exists())
+        return confirm_response.data
+
     def test_register_seeker_requires_university_email(self) -> None:
         payload = self._register_payload(email="alex@gmail.com")
         response = self.client.post(reverse("users:register"), payload, format="json")
