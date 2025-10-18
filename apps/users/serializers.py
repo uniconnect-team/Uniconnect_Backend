@@ -35,6 +35,21 @@ def _validate_password_strength(value: str) -> str:
     return value
 
 
+def _resolve_default_home_path(profile: Profile | None) -> str:
+    """Return the default home path for the given profile role."""
+
+    if not profile:
+        return "/home"
+
+    if profile.role == Profile.Roles.OWNER:
+        return "/owners/dashboard"
+
+    if profile.role == Profile.Roles.SEEKER:
+        return "/seekers/home"
+
+    return "/home"
+
+
 def _build_user_payload(user: User) -> Dict[str, Any]:
     profile = getattr(user, "profile", None)
     university_domain = getattr(profile, "university_domain", None)
@@ -59,6 +74,7 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
         "email_verified_at": getattr(profile, "email_verified_at", None),
         "university_domain": getattr(university_domain, "domain", ""),
         "properties": properties,
+        "default_home_path": _resolve_default_home_path(profile),
     }
 
 
@@ -308,6 +324,7 @@ class MeSerializer(serializers.ModelSerializer):
         source="profile.university_domain.domain", read_only=True, default=""
     )
     properties = serializers.SerializerMethodField()
+    default_home_path = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -322,6 +339,7 @@ class MeSerializer(serializers.ModelSerializer):
             "email_verified_at",
             "university_domain",
             "properties",
+            "default_home_path",
         )
 
     def get_properties(self, obj: User) -> list[dict[str, Any]]:
@@ -336,3 +354,7 @@ class MeSerializer(serializers.ModelSerializer):
             }
             for prop in profile.properties.all().order_by("name")
         ]
+
+    def get_default_home_path(self, obj: User) -> str:
+        profile = getattr(obj, "profile", None)
+        return _resolve_default_home_path(profile)
