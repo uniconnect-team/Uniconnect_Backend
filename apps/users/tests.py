@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
 from django.urls import reverse
@@ -11,7 +12,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import EmailVerificationToken, Profile, UniversityDomain
+from .models import EmailOTP, PendingRegistration, Profile, UniversityDomain
 
 
 class AuthFlowTests(APITestCase):
@@ -22,7 +23,11 @@ class AuthFlowTests(APITestCase):
         # Ensure allow-listed domains exist for tests (migrations should seed these).
         UniversityDomain.objects.get_or_create(domain="mail.aub.edu", defaults={"university_name": "AUB"})
 
-    def _register_user(self, role: str = Profile.Roles.SEEKER, email: str = "student@mail.aub.edu") -> dict:
+    def _register_user(
+        self,
+        role: str = Profile.Roles.SEEKER,
+        email: str = "student@mail.aub.edu",
+    ) -> "Response":
         payload = {
             "full_name": "Alex Student",
             "phone": "+96171123456",
@@ -33,6 +38,36 @@ class AuthFlowTests(APITestCase):
         response = self.client.post(reverse("users:register"), payload, format="json")
         return response
 
+    def _complete_registration(
+        self,
+        role: str = Profile.Roles.SEEKER,
+        email: str = "student@mail.aub.edu",
+    ) -> dict:
+        if not PendingRegistration.objects.filter(email=email).exists():
+            mail.outbox.clear()
+            response = self._register_user(role=role, email=email)
+            self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+            self.assertTrue(response.data["ok"])
+
+        self.assertTrue(PendingRegistration.objects.filter(email=email).exists())
+        self.assertGreater(len(mail.outbox), 0)
+
+        message = mail.outbox[-1]
+        match = re.search(r"(\d{6})", message.body)
+        self.assertIsNotNone(match)
+        code = match.group(1) if match else "000000"
+
+        confirm_response = self.client.post(
+            reverse("users:verify-email-confirm"),
+            {"email": email, "code": code},
+            format="json",
+        )
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(confirm_response.data["ok"])
+        self.assertIn("user", confirm_response.data)
+        self.assertFalse(PendingRegistration.objects.filter(email=email).exists())
+        return confirm_response.data
+
     def test_register_seeker_requires_university_email(self) -> None:
         response = self._register_user(email="alex@gmail.com")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -40,20 +75,23 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.data["email"][0].code, "UNIVERSITY_EMAIL_REQUIRED")
 
     def test_register_owner_allows_non_university_email(self) -> None:
-        response = self._register_user(role=Profile.Roles.OWNER, email="owner@gmail.com")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["email"], "owner@gmail.com")
-        self.assertEqual(response.data["role"], Profile.Roles.OWNER)
+        data = self._complete_registration(role=Profile.Roles.OWNER, email="owner@gmail.com")
+        self.assertEqual(data["user"]["email"], "owner@gmail.com")
+        self.assertEqual(data["user"]["role"], Profile.Roles.OWNER)
 
-    def test_register_user_returns_verification_fields(self) -> None:
+    def test_registration_defers_user_creation_until_verified(self) -> None:
         response = self._register_user()
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertFalse(response.data["is_student_verified"])
-        self.assertIsNone(response.data["email_verified_at"])
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertTrue(response.data["ok"])
+        self.assertEqual(User.objects.filter(email="student@mail.aub.edu").count(), 0)
+
+        confirm_payload = self._complete_registration()
+        self.assertEqual(User.objects.filter(email="student@mail.aub.edu").count(), 1)
+        self.assertIn("access", confirm_payload)
+        self.assertIn("refresh", confirm_payload)
 
     def test_login_with_email(self) -> None:
-        register_response = self._register_user(role=Profile.Roles.OWNER, email="owner@gmail.com")
-        self.assertEqual(register_response.status_code, status.HTTP_201_CREATED)
+        self._complete_registration(role=Profile.Roles.OWNER, email="owner@gmail.com")
         login_response = self.client.post(
             reverse("users:login"),
             {"identifier": "owner@gmail.com", "password": "Passw0rd1"},
@@ -64,7 +102,9 @@ class AuthFlowTests(APITestCase):
         self.assertFalse(login_response.data["user"]["is_student_verified"])
 
     def test_verification_request_and_confirm_flow(self) -> None:
-        self._register_user()
+        register_response = self._register_user()
+        self.assertEqual(register_response.status_code, status.HTTP_202_ACCEPTED)
+        mail.outbox.clear()
         request_response = self.client.post(
             reverse("users:verify-email-request"),
             {"email": "student@mail.aub.edu"},
@@ -75,6 +115,7 @@ class AuthFlowTests(APITestCase):
         self.assertGreater(len(mail.outbox), 0)
 
         message = mail.outbox[-1]
+        self.assertEqual(message.from_email, settings.DEFAULT_FROM_EMAIL)
         match = re.search(r"(\d{6})", message.body)
         self.assertIsNotNone(match)
         code = match.group(1) if match else "000000"
@@ -87,6 +128,8 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
         self.assertTrue(confirm_response.data["ok"])
 
+        self.assertFalse(PendingRegistration.objects.filter(email="student@mail.aub.edu").exists())
+
         user = User.objects.get(email="student@mail.aub.edu")
         profile = user.profile
         self.assertTrue(profile.is_student_verified)
@@ -94,8 +137,8 @@ class AuthFlowTests(APITestCase):
         self.assertIsNotNone(profile.university_domain)
         self.assertEqual(profile.university_domain.domain, "mail.aub.edu")
 
-        token = EmailVerificationToken.objects.filter(user=user).latest("created_at")
-        self.assertIsNotNone(token.consumed_at)
+        otp = EmailOTP.objects.filter(email="student@mail.aub.edu").latest("created_at")
+        self.assertIsNotNone(otp.used_at)
 
         # Check /me endpoint reflects verification status
         login_response = self.client.post(
@@ -112,11 +155,13 @@ class AuthFlowTests(APITestCase):
 
     def test_verification_request_respects_cooldown(self) -> None:
         self._register_user()
-        self.client.post(
+        first_response = self.client.post(
             reverse("users:verify-email-request"),
             {"email": "student@mail.aub.edu"},
             format="json",
         )
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+
         second_response = self.client.post(
             reverse("users:verify-email-request"),
             {"email": "student@mail.aub.edu"},
@@ -134,9 +179,9 @@ class AuthFlowTests(APITestCase):
         )
         self.assertEqual(request_response.status_code, status.HTTP_200_OK)
 
-        token = EmailVerificationToken.objects.latest("created_at")
-        token.expires_at = timezone.now() - timedelta(minutes=1)
-        token.save(update_fields=["expires_at"])
+        otp = EmailOTP.objects.latest("created_at")
+        otp.expires_at = timezone.now() - timedelta(minutes=1)
+        otp.save(update_fields=["expires_at"])
 
         confirm_response = self.client.post(
             reverse("users:verify-email-confirm"),
@@ -145,3 +190,25 @@ class AuthFlowTests(APITestCase):
         )
         self.assertEqual(confirm_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(confirm_response.data["non_field_errors"][0].code, "expired_code")
+
+    def test_seeker_alias_verification_endpoints(self) -> None:
+        self._register_user()
+        request_response = self.client.post(
+            reverse("users:seeker-verify-email-request"),
+            {"email": "student@mail.aub.edu"},
+            format="json",
+        )
+        self.assertEqual(request_response.status_code, status.HTTP_200_OK)
+
+        otp = EmailOTP.objects.latest("created_at")
+        message = mail.outbox[-1]
+        match = re.search(r"(\d{6})", message.body)
+        code = match.group(1) if match else "000000"
+
+        confirm_response = self.client.post(
+            reverse("users:seeker-verify-email-confirm"),
+            {"email": "student@mail.aub.edu", "code": code},
+            format="json",
+        )
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(confirm_response.data["ok"])

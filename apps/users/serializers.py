@@ -3,23 +3,21 @@ from __future__ import annotations
 
 import random
 import re
-import secrets
 from datetime import timedelta
 from typing import Any, Dict
 
 from django.conf import settings
-from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
-from django.core.mail import EmailMultiAlternatives
-from django.db import IntegrityError, transaction
-from django.template.loader import render_to_string
+from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers, status
 from rest_framework.exceptions import APIException, AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailVerificationToken, Profile, UniversityDomain
+from .models import EmailOTP, PendingRegistration, Profile, UniversityDomain
+from .services.verification import confirm_code, send_verification
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"
@@ -54,18 +52,13 @@ class ConflictError(APIException):
 
 
 class RegisterSerializer(serializers.Serializer):
-    """Serializer for registering a new user."""
+    """Serializer for initiating a new user registration."""
 
-    id = serializers.IntegerField(read_only=True)
-    username = serializers.CharField(read_only=True)
     full_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
     phone = serializers.CharField(max_length=20)
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     role = serializers.ChoiceField(choices=Profile.Roles.choices)
-    is_student_verified = serializers.BooleanField(read_only=True)
-    email_verified_at = serializers.DateTimeField(read_only=True)
-    university_domain = serializers.CharField(read_only=True)
 
     def validate_password(self, value: str) -> str:
         if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
@@ -77,45 +70,109 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate_email(self, value: str) -> str:
         value = _normalize_email(value)
+        role = self.initial_data.get("role")
         if User.objects.filter(email__iexact=value).exists():
             raise ConflictError(_("A user with this email already exists."))
-        role = self.initial_data.get("role")
+
+        domain_value = value.split("@")[-1]
+        domain_obj = None
         if role == Profile.Roles.SEEKER:
-            domain = value.split("@")[-1]
-            if not UniversityDomain.objects.filter(domain__iexact=domain, is_active=True).exists():
+            try:
+                domain_obj = UniversityDomain.objects.get(
+                    domain__iexact=domain_value,
+                    is_active=True,
+                )
+            except UniversityDomain.DoesNotExist as exc:
                 raise serializers.ValidationError(
                     _("A valid Lebanese university email is required."),
                     code=UNIVERSITY_EMAIL_ERROR_CODE,
-                )
+                ) from exc
+        else:
+            domain_obj = (
+                UniversityDomain.objects.filter(domain__iexact=domain_value, is_active=True)
+                .order_by("-created_at")
+                .first()
+            )
+
+        self.context["domain"] = domain_obj
         return value
 
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        email = attrs["email"]
+        phone = attrs["phone"]
+        cooldown_seconds = int(getattr(settings, "VERIFY_RESEND_COOLDOWN_SEC", 60))
+        now = timezone.now()
+
+        if Profile.objects.filter(phone=phone).exists():
+            raise serializers.ValidationError(
+                {"phone": [_("Phone number must be unique.")]}
+            )
+
+        pending_conflict = (
+            PendingRegistration.objects.filter(phone=phone)
+            .exclude(email__iexact=email)
+            .exists()
+        )
+        if pending_conflict:
+            raise serializers.ValidationError(
+                {"phone": [_("Phone number must be unique.")]}
+            )
+
+        recent_token = EmailOTP.objects.filter(email=email).order_by("-created_at").first()
+        if recent_token and recent_token.created_at + timedelta(seconds=cooldown_seconds) > now:
+            raise serializers.ValidationError(
+                _("Please wait before requesting a new verification code."),
+                code="cooldown_active",
+            )
+
+        daily_limit = int(getattr(settings, "VERIFY_MAX_DAILY_SENDS", 5))
+        sent_today = EmailOTP.objects.filter(
+            email=email,
+            created_at__gte=now - timedelta(hours=24),
+        ).count()
+        if sent_today >= daily_limit:
+            raise serializers.ValidationError(
+                _("Maximum verification attempts reached. Please try again later."),
+                code="rate_limited",
+            )
+
+        self.context["cooldown"] = cooldown_seconds
+        return attrs
+
     def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
+        email: str = validated_data["email"]
         full_name: str = validated_data.get("full_name", "")
         phone: str = validated_data["phone"]
-        email: str = validated_data["email"]
-        password: str = validated_data["password"]
         role: str = validated_data["role"]
+        hashed_password = make_password(validated_data["password"])
+        domain = self.context.get("domain")
 
-        username_base = email.split("@")[0]
-        username_candidate = username_base
-        while User.objects.filter(username=username_candidate).exists():
-            username_candidate = f"{username_base}{random.randint(1000, 9999)}"
+        PendingRegistration.objects.update_or_create(
+            email=email,
+            defaults={
+                "full_name": full_name,
+                "phone": phone,
+                "password_hash": hashed_password,
+                "role": role,
+                "university_domain": domain,
+                "client_ip": self.context.get("ip"),
+                "user_agent": (self.context.get("user_agent", "") or "")[:255],
+            },
+        )
 
-        try:
-            with transaction.atomic():
-                user = User(username=username_candidate, email=email)
-                user.set_password(password)
-                user.save()
-                Profile.objects.create(
-                    user=user,
-                    full_name=full_name,
-                    phone=phone,
-                    role=role,
-                )
-        except IntegrityError as exc:
-            raise serializers.ValidationError({"phone": [_("Phone number must be unique.")]}) from exc
+        send_verification(
+            email=email,
+            full_name=full_name or email.split("@")[0],
+            university_domain=domain.domain if domain else email.split("@")[-1],
+            ip=self.context.get("ip"),
+        )
 
-        return _build_user_payload(user)
+        return {
+            "ok": True,
+            "email": email,
+            "cooldownSeconds": self.context.get("cooldown", 60),
+            "requiresVerification": True,
+        }
 
 
 class LoginSerializer(serializers.Serializer):
@@ -187,114 +244,109 @@ class MeSerializer(serializers.ModelSerializer):
 
 
 class VerificationRequestSerializer(serializers.Serializer):
-    """Serializer to request an email verification OTP."""
+    """Serializer to request (or resend) an email verification OTP."""
 
     email = serializers.EmailField()
 
     def validate_email(self, value: str) -> str:
-        normalized = _normalize_email(value)
-        domain_value = normalized.split("@")[-1]
-        try:
-            domain = UniversityDomain.objects.get(domain__iexact=domain_value, is_active=True)
-        except UniversityDomain.DoesNotExist as exc:
-            raise serializers.ValidationError(
-                _("A valid Lebanese university email is required."),
-                code=UNIVERSITY_EMAIL_ERROR_CODE,
-            ) from exc
-        self.context["domain"] = domain
-        return normalized
+        return _normalize_email(value)
 
     def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         email = attrs["email"]
         user = User.objects.filter(email__iexact=email).select_related("profile").first()
-        self.context["user"] = user
-        self.context["cooldown"] = getattr(settings, "VERIFY_RESEND_COOLDOWN_SEC", 60)
-        if not user:
-            return attrs
+        pending = PendingRegistration.objects.filter(email__iexact=email).first()
+        cooldown_seconds = int(getattr(settings, "VERIFY_RESEND_COOLDOWN_SEC", 60))
 
-        profile = getattr(user, "profile", None)
-        if profile and profile.role != Profile.Roles.SEEKER:
+        if not user and not pending:
             raise serializers.ValidationError(
-                _("Email verification is only available for student accounts."),
-                code="invalid_role",
+                _("No verification request found for this email."),
+                code="unknown_email",
+            )
+
+        role = None
+        if user and getattr(user, "profile", None):
+            role = user.profile.role
+        elif pending:
+            role = pending.role
+
+        domain_obj = None
+        domain_value = email.split("@")[-1]
+        if role == Profile.Roles.SEEKER:
+            try:
+                domain_obj = UniversityDomain.objects.get(
+                    domain__iexact=domain_value,
+                    is_active=True,
+                )
+            except UniversityDomain.DoesNotExist as exc:
+                raise serializers.ValidationError(
+                    _("A valid Lebanese university email is required."),
+                    code=UNIVERSITY_EMAIL_ERROR_CODE,
+                ) from exc
+        else:
+            domain_obj = (
+                UniversityDomain.objects.filter(domain__iexact=domain_value, is_active=True)
+                .order_by("-created_at")
+                .first()
             )
 
         now = timezone.now()
-        cooldown_seconds = self.context["cooldown"]
-        recent_token = (
-            EmailVerificationToken.objects.filter(
-                user=user,
-                method=EmailVerificationToken.Methods.OTP,
-                consumed_at__isnull=True,
-            )
-            .order_by("-created_at")
-            .first()
-        )
+        recent_token = EmailOTP.objects.filter(email=email).order_by("-created_at").first()
         if recent_token and recent_token.created_at + timedelta(seconds=cooldown_seconds) > now:
             raise serializers.ValidationError(
                 _("Please wait before requesting a new verification code."),
                 code="cooldown_active",
             )
 
-        daily_limit = getattr(settings, "VERIFY_MAX_DAILY_SENDS", 5)
-        day_start = now - timedelta(hours=24)
-        sent_today = EmailVerificationToken.objects.filter(
-            user=user,
-            created_at__gte=day_start,
+        daily_limit = int(getattr(settings, "VERIFY_MAX_DAILY_SENDS", 5))
+        sent_today = EmailOTP.objects.filter(
+            email=email,
+            created_at__gte=now - timedelta(hours=24),
         ).count()
         if sent_today >= daily_limit:
             raise serializers.ValidationError(
                 _("Maximum verification attempts reached. Please try again later."),
                 code="rate_limited",
             )
+
+        self.context.update(
+            {
+                "user": user,
+                "pending": pending,
+                "cooldown": cooldown_seconds,
+                "domain": domain_obj,
+            }
+        )
         return attrs
 
     def save(self, **kwargs) -> Dict[str, Any]:
         user: User | None = self.context.get("user")
-        domain: UniversityDomain = self.context["domain"]
-        cooldown_seconds: int = self.context["cooldown"]
-        if not user:
-            return {"ok": True, "cooldownSeconds": cooldown_seconds}
+        pending: PendingRegistration | None = self.context.get("pending")
+        domain: UniversityDomain | None = self.context.get("domain")
+        cooldown_seconds: int = self.context.get("cooldown", 60)
+        email = self.validated_data["email"]
 
-        EmailVerificationToken.objects.filter(
-            user=user,
-            method=EmailVerificationToken.Methods.OTP,
-            consumed_at__isnull=True,
-        ).update(consumed_at=timezone.now())
+        full_name = ""
+        if user and getattr(user, "profile", None):
+            full_name = user.profile.full_name or user.username
+        elif pending:
+            full_name = pending.full_name or email.split("@")[0]
+        else:
+            full_name = email.split("@")[0]
 
-        otp_code = f"{random.randint(0, 999999):06d}"
-        token_value = secrets.token_urlsafe(32)
-        expires_at = timezone.now() + timedelta(
-            minutes=getattr(settings, "VERIFY_TOKEN_TTL_MIN", 15)
+        university_domain = None
+        if domain:
+            university_domain = domain.domain
+        elif pending and pending.university_domain:
+            university_domain = pending.university_domain.domain
+        else:
+            university_domain = email.split("@")[-1]
+
+        send_verification(
+            email=email,
+            full_name=full_name,
+            university_domain=university_domain,
+            ip=self.context.get("ip"),
         )
-
-        ip_address = self.context.get("ip")
-        user_agent = (self.context.get("user_agent") or "")[:512]
-
-        EmailVerificationToken.objects.create(
-            user=user,
-            token_hash=make_password(token_value),
-            otp_hash=make_password(otp_code),
-            method=EmailVerificationToken.Methods.OTP,
-            expires_at=expires_at,
-            created_ip=ip_address,
-            created_ua=user_agent,
-        )
-
-        context = {
-            "full_name": getattr(user.profile, "full_name", user.username),
-            "code": otp_code,
-            "expiry_minutes": getattr(settings, "VERIFY_TOKEN_TTL_MIN", 15),
-            "university_domain": domain.domain,
-        }
-
-        subject = "Verify your UniConnect student email"
-        text_body = render_to_string("emails/verify_student_email.txt", context)
-        html_body = render_to_string("emails/verify_student_email.html", context)
-
-        message = EmailMultiAlternatives(subject, text_body, to=[user.email])
-        message.attach_alternative(html_body, "text/html")
-        message.send(fail_silently=False)
 
         return {"ok": True, "cooldownSeconds": cooldown_seconds}
 
@@ -310,61 +362,98 @@ class VerificationConfirmSerializer(serializers.Serializer):
 
     def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         email = attrs["email"]
-        code = attrs["code"]
         user = User.objects.filter(email__iexact=email).select_related("profile").first()
-        if not user:
+        pending = PendingRegistration.objects.filter(email__iexact=email).first()
+        if not user and not pending:
             raise serializers.ValidationError(
                 _("The verification code is invalid."),
                 code="invalid_code",
             )
-
-        token = (
-            EmailVerificationToken.objects.filter(
-                user=user,
-                method=EmailVerificationToken.Methods.OTP,
-                consumed_at__isnull=True,
-            )
-            .order_by("-created_at")
-            .first()
-        )
-
-        if not token:
-            raise serializers.ValidationError(
-                _("The verification code is invalid."),
-                code="invalid_code",
-            )
-
-        if token.is_expired:
-            raise serializers.ValidationError(
-                _("The verification code has expired."),
-                code="expired_code",
-            )
-
-        if not token.otp_hash or not check_password(code, token.otp_hash):
-            raise serializers.ValidationError(
-                _("The verification code is invalid."),
-                code="invalid_code",
-            )
-
         self.context["user"] = user
-        self.context["token"] = token
+        self.context["pending"] = pending
         return attrs
 
     def save(self, **kwargs) -> Dict[str, Any]:
-        user: User = self.context["user"]
-        token: EmailVerificationToken = self.context["token"]
-        profile = user.profile
+        user: User | None = self.context.get("user")
+        pending: PendingRegistration | None = self.context.get("pending")
 
+        success, result = confirm_code(
+            email=self.validated_data["email"],
+            code=self.validated_data["code"],
+        )
+
+        if not success:
+            if result == "expired":
+                raise serializers.ValidationError(
+                    _("The verification code has expired."),
+                    code="expired_code",
+                )
+            raise serializers.ValidationError(
+                _("The verification code is invalid."),
+                code="invalid_code",
+            )
+
+        otp: EmailOTP = result
         now = timezone.now()
-        profile.is_student_verified = True
+        created_user = False
+
+        if user is None and pending is not None:
+            email = pending.email
+            username_base = email.split("@")[0]
+            username_candidate = username_base
+            while User.objects.filter(username=username_candidate).exists():
+                username_candidate = f"{username_base}{random.randint(1000, 9999)}"
+
+            with transaction.atomic():
+                user = User(username=username_candidate, email=email)
+                user.password = pending.password_hash
+                user.save()
+
+                is_student = pending.role == Profile.Roles.SEEKER
+                Profile.objects.create(
+                    user=user,
+                    full_name=pending.full_name,
+                    phone=pending.phone,
+                    role=pending.role,
+                    is_student_verified=is_student,
+                    email_verified_at=now,
+                    university_domain=pending.university_domain if is_student else None,
+                )
+                pending.delete()
+            created_user = True
+
+        if user is None:
+            raise serializers.ValidationError(
+                _("Unable to complete verification."),
+                code="invalid_code",
+            )
+
+        profile = user.profile
+        is_student = profile.role == Profile.Roles.SEEKER
+        update_fields = ["email_verified_at"]
         profile.email_verified_at = now
 
-        domain_value = user.email.split("@")[-1]
-        domain = UniversityDomain.objects.filter(domain__iexact=domain_value).first()
-        profile.university_domain = domain
-        profile.save(update_fields=["is_student_verified", "email_verified_at", "university_domain"])
+        if is_student:
+            profile.is_student_verified = True
+            update_fields.append("is_student_verified")
+            if profile.university_domain is None:
+                domain_value = user.email.split("@")[-1]
+                domain = UniversityDomain.objects.filter(domain__iexact=domain_value).first()
+                profile.university_domain = domain
+                update_fields.append("university_domain")
 
-        token.consumed_at = now
-        token.save(update_fields=["consumed_at"])
+        profile.save(update_fields=update_fields)
 
-        return {"ok": True}
+        response: Dict[str, Any] = {
+            "ok": True,
+            "user": _build_user_payload(user),
+        }
+
+        if created_user:
+            refresh = RefreshToken.for_user(user)
+            response.update({
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+            })
+
+        return response
