@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from django.contrib.auth.models import User
 from django.db import models
-from django.utils import timezone
 
 
 class UniversityDomain(models.Model):
@@ -48,52 +47,3 @@ class Profile(models.Model):
         return f"Profile({self.user.username})"
 
 
-class EmailOTP(models.Model):
-    """Stores hashed one-time passwords for email verification."""
-
-    email = models.EmailField(db_index=True)
-    code_hash = models.CharField(max_length=128)
-    expires_at = models.DateTimeField()
-    used_at = models.DateTimeField(null=True, blank=True)
-    attempts = models.PositiveSmallIntegerField(default=0)
-    created_ip = models.GenericIPAddressField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-        indexes = [models.Index(fields=["email"])]
-
-    @property
-    def is_active(self) -> bool:
-        return self.used_at is None and self.expires_at > timezone.now()
-
-
-class PendingRegistration(models.Model):
-    """Store registration details awaiting email verification."""
-
-    email = models.EmailField(unique=True)
-    full_name = models.CharField(max_length=200, blank=True)
-    phone = models.CharField(max_length=20, unique=True)
-    password_hash = models.CharField(max_length=128)
-    role = models.CharField(max_length=10, choices=Profile.Roles.choices)
-    university_domain = models.ForeignKey(
-        UniversityDomain,
-        related_name="pending_registrations",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    client_ip = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.CharField(max_length=255, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-        indexes = [
-            models.Index(fields=["email"]),
-            models.Index(fields=["phone"]),
-        ]
-
-    def __str__(self) -> str:  # pragma: no cover - admin helper
-        return f"PendingRegistration({self.email})"
