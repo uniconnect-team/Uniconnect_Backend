@@ -5,6 +5,7 @@ import re
 
 from django.contrib.auth.models import User
 from django.core import mail
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -29,6 +30,17 @@ class AuthFlowTests(APITestCase):
             "email": "student@mail.aub.edu",
             "password": "Passw0rd1",
             "role": Profile.Roles.SEEKER,
+        }
+        data.update(overrides)
+        return data
+
+    def _owner_register_payload(self, **overrides):
+        data = {
+            "full_name": "Olivia Owner",
+            "phone": "+96171110000",
+            "email": "owner@gmail.com",
+            "password": "Own3rPass",
+            "owner_access_code": "letmein",
         }
         data.update(overrides)
         return data
@@ -84,16 +96,59 @@ class AuthFlowTests(APITestCase):
         self.assertIsNotNone(profile.university_domain)
         self.assertEqual(profile.university_domain.domain, "mail.aub.edu")
 
+    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
     def test_register_owner_allows_non_university_email(self) -> None:
-        payload = self._register_payload(
-            email="owner@gmail.com",
-            role=Profile.Roles.OWNER,
+        payload = self._owner_register_payload()
+        response = self.client.post(
+            reverse("users:register-owner"), payload, format="json"
         )
-        response = self.client.post(reverse("users:register"), payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         user = User.objects.get(email="owner@gmail.com")
         self.assertEqual(user.profile.role, Profile.Roles.OWNER)
         self.assertFalse(user.profile.is_student_verified)
+
+    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
+    def test_register_owner_requires_access_code(self) -> None:
+        payload = self._owner_register_payload(owner_access_code="")
+        response = self.client.post(
+            reverse("users:register-owner"), payload, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("owner_access_code", response.data)
+
+    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
+    def test_register_owner_rejects_incorrect_code(self) -> None:
+        payload = self._owner_register_payload(owner_access_code="wrong")
+        response = self.client.post(
+            reverse("users:register-owner"), payload, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("owner_access_code", response.data)
+
+    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
+    def test_register_owner_rejects_duplicate_email_or_phone(self) -> None:
+        first_response = self.client.post(
+            reverse("users:register-owner"),
+            self._owner_register_payload(),
+            format="json",
+        )
+        self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
+
+        duplicate_email = self._owner_register_payload(phone="+96171110001")
+        response_email = self.client.post(
+            reverse("users:register-owner"), duplicate_email, format="json"
+        )
+        self.assertEqual(response_email.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response_email.data)
+
+        duplicate_phone = self._owner_register_payload(
+            email="different_owner@gmail.com"
+        )
+        response_phone = self.client.post(
+            reverse("users:register-owner"), duplicate_phone, format="json"
+        )
+        self.assertEqual(response_phone.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("phone", response_phone.data)
 
     def test_login_with_email(self) -> None:
         self.test_register_owner_allows_non_university_email()
