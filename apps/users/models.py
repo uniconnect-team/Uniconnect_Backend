@@ -114,3 +114,24 @@ class PendingRegistration(models.Model):
         return f"PendingRegistration({self.email})"
 
 
+class Property(models.Model):
+    """Housing property owned by a registered dorm owner."""
+
+    owner = models.ForeignKey(
+        Profile,
+        related_name="properties",
+        on_delete=models.CASCADE,
+    )
+    name = models.CharField(max_length=255)
+    location = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [models.Index(fields=["owner", "name"])]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable representation
+        return f"Property(name={self.name}, owner={self.owner_id})"
+
+

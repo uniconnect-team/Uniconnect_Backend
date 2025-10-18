@@ -14,7 +14,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailOTP, PendingRegistration, Profile, UniversityDomain
+from .models import EmailOTP, PendingRegistration, Profile, Property, UniversityDomain
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"
@@ -38,6 +38,16 @@ def _validate_password_strength(value: str) -> str:
 def _build_user_payload(user: User) -> Dict[str, Any]:
     profile = getattr(user, "profile", None)
     university_domain = getattr(profile, "university_domain", None)
+    properties: list[dict[str, Any]] = []
+    if profile and profile.role == Profile.Roles.OWNER:
+        properties = [
+            {
+                "id": prop.id,
+                "name": prop.name,
+                "location": prop.location,
+            }
+            for prop in profile.properties.all().order_by("name")
+        ]
     return {
         "id": user.id,
         "username": user.username,
@@ -48,6 +58,7 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
         "is_student_verified": getattr(profile, "is_student_verified", False),
         "email_verified_at": getattr(profile, "email_verified_at", None),
         "university_domain": getattr(university_domain, "domain", ""),
+        "properties": properties,
     }
 
 
@@ -142,7 +153,7 @@ class RegisterSerializer(serializers.Serializer):
         self.context["cooldown"] = cooldown_seconds
         return attrs
 
-    def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_user_and_profile(self, validated_data: Dict[str, Any]) -> tuple[User, Profile]:
         email: str = validated_data["email"]
         phone: str = validated_data["phone"]
         role: str = validated_data["role"]
@@ -157,23 +168,27 @@ class RegisterSerializer(serializers.Serializer):
             suffix += 1
             username_candidate = f"{username_base}{suffix}"
 
-        with transaction.atomic():
-            user = User.objects.create_user(
-                username=username_candidate,
-                email=email,
-                password=password,
-            )
+        user = User.objects.create_user(
+            username=username_candidate,
+            email=email,
+            password=password,
+        )
 
-            is_student = role == Profile.Roles.SEEKER
-            Profile.objects.create(
-                user=user,
-                full_name=full_name,
-                phone=phone,
-                role=role,
-                is_student_verified=is_student,
-                email_verified_at=timezone.now() if is_student else None,
-                university_domain=domain if is_student else None,
-            )
+        is_student = role == Profile.Roles.SEEKER
+        profile = Profile.objects.create(
+            user=user,
+            full_name=full_name,
+            phone=phone,
+            role=role,
+            is_student_verified=is_student,
+            email_verified_at=timezone.now() if is_student else None,
+            university_domain=domain if is_student else None,
+        )
+        return user, profile
+
+    def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
+        with transaction.atomic():
+            user, _profile = self._create_user_and_profile(validated_data)
 
         refresh = RefreshToken.for_user(user)
         return {
@@ -184,9 +199,13 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class OwnerRegisterSerializer(RegisterSerializer):
-    """Serializer for dorm owners registering via a private access code."""
+    """Serializer for dorm owners registering their properties."""
 
-    owner_access_code = serializers.CharField(write_only=True)
+    class PropertyInputSerializer(serializers.Serializer):
+        name = serializers.CharField(max_length=255)
+        location = serializers.CharField(max_length=255)
+
+    properties = PropertyInputSerializer(many=True)
     role = serializers.HiddenField(default=Profile.Roles.OWNER)
 
     def validate_email(self, value: str) -> str:  # noqa: D401 - delegated helper
@@ -208,28 +227,32 @@ class OwnerRegisterSerializer(RegisterSerializer):
         self.context["domain"] = domain_obj
         return value
 
-    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:  # noqa: D401 - delegated helper
-        attrs = super().validate(attrs)
-
-        configured_code = getattr(settings, "DORM_OWNER_ACCESS_CODE", "")
-        if not configured_code:
+    def validate_properties(self, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not value:
             raise serializers.ValidationError(
-                {
-                    "owner_access_code": [
-                        _(
-                            "Owner registration is currently unavailable. Please contact support."
-                        ),
-                    ]
-                }
+                _("At least one property must be provided for registration."),
+                code="invalid",
             )
+        return value
 
-        supplied_code = attrs.pop("owner_access_code", "")
-        if supplied_code != configured_code:
-            raise serializers.ValidationError(
-                {"owner_access_code": [_("Invalid owner access code provided.")]}
-            )
+    def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
+        properties_data = validated_data.pop("properties", [])
 
-        return attrs
+        with transaction.atomic():
+            user, profile = self._create_user_and_profile(validated_data)
+            for property_info in properties_data:
+                Property.objects.create(
+                    owner=profile,
+                    name=property_info["name"],
+                    location=property_info["location"],
+                )
+
+        refresh = RefreshToken.for_user(user)
+        return {
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": _build_user_payload(user),
+        }
 
 
 class LoginSerializer(serializers.Serializer):
@@ -284,6 +307,7 @@ class MeSerializer(serializers.ModelSerializer):
     university_domain = serializers.CharField(
         source="profile.university_domain.domain", read_only=True, default=""
     )
+    properties = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -297,4 +321,18 @@ class MeSerializer(serializers.ModelSerializer):
             "is_student_verified",
             "email_verified_at",
             "university_domain",
+            "properties",
         )
+
+    def get_properties(self, obj: User) -> list[dict[str, Any]]:
+        profile = getattr(obj, "profile", None)
+        if not profile or profile.role != Profile.Roles.OWNER:
+            return []
+        return [
+            {
+                "id": prop.id,
+                "name": prop.name,
+                "location": prop.location,
+            }
+            for prop in profile.properties.all().order_by("name")
+        ]
