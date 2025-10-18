@@ -66,3 +66,34 @@ class EmailOTP(models.Model):
     @property
     def is_active(self) -> bool:
         return self.used_at is None and self.expires_at > timezone.now()
+
+
+class PendingRegistration(models.Model):
+    """Store registration details awaiting email verification."""
+
+    email = models.EmailField(unique=True)
+    full_name = models.CharField(max_length=200, blank=True)
+    phone = models.CharField(max_length=20, unique=True)
+    password_hash = models.CharField(max_length=128)
+    role = models.CharField(max_length=10, choices=Profile.Roles.choices)
+    university_domain = models.ForeignKey(
+        UniversityDomain,
+        related_name="pending_registrations",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    client_ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["email"]),
+            models.Index(fields=["phone"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - admin helper
+        return f"PendingRegistration({self.email})"

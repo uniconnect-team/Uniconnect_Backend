@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import EmailOTP, Profile, UniversityDomain
+from .models import EmailOTP, PendingRegistration, Profile, UniversityDomain
 
 
 @admin.register(Profile)
@@ -33,3 +33,16 @@ class EmailOTPAdmin(admin.ModelAdmin):
     list_display = ("email", "expires_at", "used_at", "attempts", "created_at")
     search_fields = ("email",)
     list_filter = ("used_at",)
+
+
+@admin.register(PendingRegistration)
+class PendingRegistrationAdmin(admin.ModelAdmin):
+    list_display = (
+        "email",
+        "phone",
+        "role",
+        "created_at",
+        "updated_at",
+    )
+    search_fields = ("email", "phone")
+    list_filter = ("role",)

@@ -17,11 +17,23 @@ from .serializers import (
 )
 
 
-class RegisterView(generics.CreateAPIView):
-    """Handle user registration."""
+class RegisterView(APIView):
+    """Handle user registration requests (verification-first flow)."""
 
     permission_classes = [AllowAny]
-    serializer_class = RegisterSerializer
+
+    def post(self, request, *args, **kwargs):  # noqa: D401 - simple wrapper
+        serializer = RegisterSerializer(
+            data=request.data,
+            context={
+                "request": request,
+                "ip": request.META.get("REMOTE_ADDR"),
+                "user_agent": request.META.get("HTTP_USER_AGENT", ""),
+            },
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+        return Response(result, status=status.HTTP_202_ACCEPTED)
 
 
 class LoginView(APIView):
