@@ -153,6 +153,46 @@ class AuthFlowTests(APITestCase):
         self.assertTrue(me_response.data["is_student_verified"])
         self.assertEqual(me_response.data["university_domain"], "mail.aub.edu")
 
+    def test_verification_request_creates_pending_registration(self) -> None:
+        mail.outbox.clear()
+        payload = {
+            "full_name": "Sam Student",
+            "phone": "+96171000000",
+            "email": "sam@mail.aub.edu",
+            "password": "Str0ngPass",
+            "role": Profile.Roles.SEEKER,
+        }
+
+        request_response = self.client.post(
+            reverse("users:seeker-verify-email-request"),
+            payload,
+            format="json",
+        )
+        self.assertEqual(request_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(request_response.data["ok"])
+        self.assertTrue(request_response.data["requiresVerification"])
+
+        pending = PendingRegistration.objects.get(email="sam@mail.aub.edu")
+        self.assertEqual(pending.full_name, payload["full_name"])
+        self.assertEqual(pending.phone, payload["phone"])
+        self.assertEqual(pending.role, Profile.Roles.SEEKER)
+        self.assertIsNotNone(pending.university_domain)
+
+        self.assertGreater(len(mail.outbox), 0)
+        message = mail.outbox[-1]
+        match = re.search(r"(\d{6})", message.body)
+        self.assertIsNotNone(match)
+        code = match.group(1) if match else "000000"
+
+        confirm_response = self.client.post(
+            reverse("users:seeker-verify-email-confirm"),
+            {"email": payload["email"], "code": code},
+            format="json",
+        )
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(confirm_response.data["ok"])
+        self.assertTrue(User.objects.filter(email=payload["email"]).exists())
+
     def test_verification_request_respects_cooldown(self) -> None:
         self._register_user()
         first_response = self.client.post(

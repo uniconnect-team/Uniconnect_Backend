@@ -27,6 +27,17 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+def _validate_password_strength(value: str) -> str:
+    """Ensure the supplied password contains both letters and digits."""
+
+    if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+        raise serializers.ValidationError(
+            _("Password must contain at least one letter and one digit."),
+            code="invalid_password",
+        )
+    return value
+
+
 def _build_user_payload(user: User) -> Dict[str, Any]:
     profile = getattr(user, "profile", None)
     university_domain = getattr(profile, "university_domain", None)
@@ -61,12 +72,7 @@ class RegisterSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=Profile.Roles.choices)
 
     def validate_password(self, value: str) -> str:
-        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
-            raise serializers.ValidationError(
-                _("Password must contain at least one letter and one digit."),
-                code="invalid_password",
-            )
-        return value
+        return _validate_password_strength(value)
 
     def validate_email(self, value: str) -> str:
         value = _normalize_email(value)
@@ -247,9 +253,16 @@ class VerificationRequestSerializer(serializers.Serializer):
     """Serializer to request (or resend) an email verification OTP."""
 
     email = serializers.EmailField()
+    full_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    phone = serializers.CharField(max_length=20, required=False)
+    password = serializers.CharField(write_only=True, min_length=8, required=False)
+    role = serializers.ChoiceField(choices=Profile.Roles.choices, required=False)
 
     def validate_email(self, value: str) -> str:
         return _normalize_email(value)
+
+    def validate_password(self, value: str) -> str:
+        return _validate_password_strength(value)
 
     def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         email = attrs["email"]
@@ -257,17 +270,31 @@ class VerificationRequestSerializer(serializers.Serializer):
         pending = PendingRegistration.objects.filter(email__iexact=email).first()
         cooldown_seconds = int(getattr(settings, "VERIFY_RESEND_COOLDOWN_SEC", 60))
 
-        if not user and not pending:
-            raise serializers.ValidationError(
-                _("No verification request found for this email."),
-                code="unknown_email",
-            )
-
-        role = None
+        provided_role = attrs.get("role")
+        role = provided_role
         if user and getattr(user, "profile", None):
             role = user.profile.role
-        elif pending:
+        elif pending and not role:
             role = pending.role
+
+        missing_fields: Dict[str, list[str]] = {}
+        is_new_signup = not user and not pending
+        if is_new_signup:
+            if not role:
+                missing_fields.setdefault("role", []).append(_("This field is required."))
+            if not attrs.get("phone"):
+                missing_fields.setdefault("phone", []).append(_("This field is required."))
+            if not attrs.get("password"):
+                missing_fields.setdefault("password", []).append(_("This field is required."))
+
+        if missing_fields:
+            raise serializers.ValidationError(missing_fields)
+
+        if not role:
+            raise serializers.ValidationError(
+                _("Unable to determine the account type for verification."),
+                code="invalid_role",
+            )
 
         domain_obj = None
         domain_value = email.split("@")[-1]
@@ -289,6 +316,18 @@ class VerificationRequestSerializer(serializers.Serializer):
                 .first()
             )
 
+        phone = attrs.get("phone")
+        if phone:
+            phone_conflict = Profile.objects.filter(phone=phone).exists()
+            if not phone_conflict:
+                phone_conflict = (
+                    PendingRegistration.objects.filter(phone=phone)
+                    .exclude(email__iexact=email)
+                    .exists()
+                )
+            if phone_conflict:
+                raise serializers.ValidationError({"phone": [_("Phone number must be unique.")]})
+
         now = timezone.now()
         recent_token = EmailOTP.objects.filter(email=email).order_by("-created_at").first()
         if recent_token and recent_token.created_at + timedelta(seconds=cooldown_seconds) > now:
@@ -308,12 +347,48 @@ class VerificationRequestSerializer(serializers.Serializer):
                 code="rate_limited",
             )
 
+        update_pending = False
+        pending_defaults: Dict[str, Any] = {}
+        if not user:
+            update_pending = True
+            base_full_name = attrs.get("full_name") or (pending.full_name if pending else "")
+            phone_value = attrs.get("phone") or (pending.phone if pending else None)
+            password_value = attrs.get("password")
+
+            if phone_value is None:
+                raise serializers.ValidationError({"phone": [_("This field is required.")]})
+            if password_value is None and is_new_signup:
+                raise serializers.ValidationError({"password": [_("This field is required.")]})
+
+            pending_defaults.update(
+                {
+                    "full_name": base_full_name,
+                    "phone": phone_value,
+                    "role": role,
+                    "university_domain": domain_obj if role == Profile.Roles.SEEKER else pending.university_domain if pending else domain_obj,
+                    "client_ip": self.context.get("ip"),
+                    "user_agent": (self.context.get("user_agent", "") or "")[:255],
+                }
+            )
+
+            if password_value:
+                pending_defaults["password_hash"] = make_password(password_value)
+            elif pending:
+                pending_defaults["password_hash"] = pending.password_hash
+
+            if pending is None and "password_hash" not in pending_defaults:
+                raise serializers.ValidationError({"password": [_("This field is required.")]})
+
         self.context.update(
             {
                 "user": user,
                 "pending": pending,
                 "cooldown": cooldown_seconds,
                 "domain": domain_obj,
+                "role": role,
+                "update_pending": update_pending,
+                "pending_defaults": pending_defaults,
+                "is_new_signup": is_new_signup,
             }
         )
         return attrs
@@ -323,7 +398,19 @@ class VerificationRequestSerializer(serializers.Serializer):
         pending: PendingRegistration | None = self.context.get("pending")
         domain: UniversityDomain | None = self.context.get("domain")
         cooldown_seconds: int = self.context.get("cooldown", 60)
+        update_pending: bool = self.context.get("update_pending", False)
         email = self.validated_data["email"]
+
+        if update_pending:
+            defaults = self.context.get("pending_defaults", {}).copy()
+            defaults.setdefault("full_name", self.validated_data.get("full_name", ""))
+            if "password_hash" not in defaults and pending:
+                defaults["password_hash"] = pending.password_hash
+            pending, _ = PendingRegistration.objects.update_or_create(
+                email=email,
+                defaults=defaults,
+            )
+            self.context["pending"] = pending
 
         full_name = ""
         if user and getattr(user, "profile", None):
@@ -331,7 +418,7 @@ class VerificationRequestSerializer(serializers.Serializer):
         elif pending:
             full_name = pending.full_name or email.split("@")[0]
         else:
-            full_name = email.split("@")[0]
+            full_name = self.validated_data.get("full_name", "") or email.split("@")[0]
 
         university_domain = None
         if domain:
@@ -348,7 +435,18 @@ class VerificationRequestSerializer(serializers.Serializer):
             ip=self.context.get("ip"),
         )
 
-        return {"ok": True, "cooldownSeconds": cooldown_seconds}
+        response: Dict[str, Any] = {
+            "ok": True,
+            "cooldownSeconds": cooldown_seconds,
+        }
+
+        if self.context.get("is_new_signup"):
+            response.update({
+                "email": email,
+                "requiresVerification": True,
+            })
+
+        return response
 
 
 class VerificationConfirmSerializer(serializers.Serializer):
