@@ -5,12 +5,11 @@ import re
 
 from django.contrib.auth.models import User
 from django.core import mail
-from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import PendingRegistration, Profile, UniversityDomain
+from .models import PendingRegistration, Profile, Property, UniversityDomain
 
 
 class AuthFlowTests(APITestCase):
@@ -40,7 +39,9 @@ class AuthFlowTests(APITestCase):
             "phone": "+96171110000",
             "email": "owner@gmail.com",
             "password": "Own3rPass",
-            "owner_access_code": "letmein",
+            "properties": [
+                {"name": "Sunset Dorms", "location": "Beirut"},
+            ],
         }
         data.update(overrides)
         return data
@@ -96,7 +97,6 @@ class AuthFlowTests(APITestCase):
         self.assertIsNotNone(profile.university_domain)
         self.assertEqual(profile.university_domain.domain, "mail.aub.edu")
 
-    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
     def test_register_owner_allows_non_university_email(self) -> None:
         payload = self._owner_register_payload()
         response = self.client.post(
@@ -106,26 +106,16 @@ class AuthFlowTests(APITestCase):
         user = User.objects.get(email="owner@gmail.com")
         self.assertEqual(user.profile.role, Profile.Roles.OWNER)
         self.assertFalse(user.profile.is_student_verified)
+        self.assertEqual(Property.objects.filter(owner=user.profile).count(), 1)
 
-    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
-    def test_register_owner_requires_access_code(self) -> None:
-        payload = self._owner_register_payload(owner_access_code="")
+    def test_register_owner_requires_property_information(self) -> None:
+        payload = self._owner_register_payload(properties=[])
         response = self.client.post(
             reverse("users:register-owner"), payload, format="json"
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("owner_access_code", response.data)
+        self.assertIn("properties", response.data)
 
-    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
-    def test_register_owner_rejects_incorrect_code(self) -> None:
-        payload = self._owner_register_payload(owner_access_code="wrong")
-        response = self.client.post(
-            reverse("users:register-owner"), payload, format="json"
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("owner_access_code", response.data)
-
-    @override_settings(DORM_OWNER_ACCESS_CODE="letmein")
     def test_register_owner_rejects_duplicate_email_or_phone(self) -> None:
         first_response = self.client.post(
             reverse("users:register-owner"),
@@ -150,11 +140,25 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response_phone.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("phone", response_phone.data)
 
+    def test_register_owner_allows_multiple_properties(self) -> None:
+        payload = self._owner_register_payload(
+            properties=[
+                {"name": "Sunset Dorms", "location": "Beirut"},
+                {"name": "Cedars Residence", "location": "Byblos"},
+            ]
+        )
+        response = self.client.post(
+            reverse("users:register-owner"), payload, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        user = User.objects.get(email="owner@gmail.com")
+        self.assertEqual(Property.objects.filter(owner=user.profile).count(), 2)
+
     def test_login_with_email(self) -> None:
         self.test_register_owner_allows_non_university_email()
         response = self.client.post(
             reverse("users:login"),
-            {"identifier": "owner@gmail.com", "password": "Passw0rd1"},
+            {"identifier": "owner@gmail.com", "password": "Own3rPass"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)

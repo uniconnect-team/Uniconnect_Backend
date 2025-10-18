@@ -34,7 +34,7 @@ class RegisterView(APIView):
 
 
 class OwnerRegisterView(APIView):
-    """Handle dorm owner registration protected by an access code."""
+    """Handle dorm owner registration with property details."""
 
     permission_classes = [AllowAny]
 
