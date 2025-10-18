@@ -1,6 +1,8 @@
 """Views for the users app."""
 from __future__ import annotations
 
+from django.conf import settings
+from django.views.generic import TemplateView
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -72,3 +74,15 @@ class VerifyEmailConfirmView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response({"ok": True}, status=status.HTTP_200_OK)
+
+
+class VerifyEmailPageView(TemplateView):
+    """Render a minimal verification UI for entering the OTP code."""
+
+    template_name = "users/verify_email.html"
+
+    def get_context_data(self, **kwargs):  # type: ignore[override]
+        context = super().get_context_data(**kwargs)
+        context.setdefault("page_title", "Verify your student email")
+        context.setdefault("support_email", getattr(settings, "MAIL_FROM", "support@uniconnect"))
+        return context

@@ -17,14 +17,17 @@
                   Thanks for joining <strong>UniConnect</strong>! To unlock student-only features, please verify
                   your {{ university_name }} email address.
                 </p>
-                <p style="margin: 32px 0; text-align: center;">
-                  <a href="{{ verification_url }}" style="background: linear-gradient(135deg, #10B981, #2DD4BF); color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 999px; display: inline-block; font-weight: bold;">
-                    Verify email
-                  </a>
+                <p style="font-size: 32px; letter-spacing: 8px; margin: 32px 0; text-align: center; font-weight: bold; color: #10B981;">
+                  {{ otp_code }}
                 </p>
-                <p>This link expires in {{ expires_in_minutes }} minutes.</p>
+                <p>Enter this one-time code on the verification page to confirm your email.</p>
+                <p>The code expires in {{ expires_in_minutes }} minutes.</p>
+                <p style="margin-top: 24px;">Need help? Reply to this email or contact {{ support_email }}.</p>
                 <p>If you didn't request this, you can safely ignore the message.</p>
                 <p style="margin-top: 32px;">Stay connected,<br />UniConnect Team</p>
+                <p style="margin-top: 12px; font-size: 12px; color: #6B7280;">
+                  Tip: keep this email open while you visit <a href="{{ app_url }}/verify-email" style="color: #10B981; text-decoration: none;">{{ app_url }}/verify-email</a> to enter your code.
+                </p>
               </td>
             </tr>
           </table>

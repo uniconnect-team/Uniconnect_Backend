@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+from typing import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -59,7 +60,7 @@ def get_matching_domain(domain: str) -> UniversityDomain | None:
 
 
 def _build_verification_email(
-    *, user: User, email: str, verification_url: str, university: UniversityDomain, expires_at: datetime
+    *, user: User, email: str, otp_code: str, university: UniversityDomain, expires_at: datetime
 ) -> tuple[str, str, str]:
     """Return subject, plain text, and HTML bodies for the verification email."""
 
@@ -69,10 +70,11 @@ def _build_verification_email(
 
     context = {
         "name": full_name,
-        "verification_url": verification_url,
+        "otp_code": otp_code,
         "university_name": university.university_name,
         "expires_in_minutes": minutes or 1,
         "support_email": settings.MAIL_FROM,
+        "app_url": settings.APP_URL.rstrip("/"),
     }
 
     text_body = render_to_string("emails/verify_student_email.txt", context)
@@ -82,14 +84,14 @@ def _build_verification_email(
 
 
 def send_verification_email(
-    *, user: User, email: str, verification_url: str, university: UniversityDomain, expires_at: datetime
+    *, user: User, email: str, otp_code: str, university: UniversityDomain, expires_at: datetime
 ) -> None:
     """Send the verification email with both HTML and plain-text bodies."""
 
     subject, text_body, html_body = _build_verification_email(
         user=user,
         email=email,
-        verification_url=verification_url,
+        otp_code=otp_code,
         university=university,
         expires_at=expires_at,
     )
@@ -119,9 +121,8 @@ def request_verification(
 
     now = timezone.now()
     expires_at = now + timedelta(minutes=ttl_minutes)
-    verification_url_base = settings.APP_URL.rstrip("/")
-
     token = secrets.token_urlsafe(32)
+    otp_code = f"{secrets.randbelow(1_000_000):06d}"
 
     with transaction.atomic():
         # Ensure only a single active token remains.
@@ -149,13 +150,14 @@ def request_verification(
         expires_at=expires_at,
         created_ip=created_ip,
         created_ua=created_ua,
+        token_type=VerificationToken.Types.OTP,
+        otp_code=otp_code,
     )
 
-    verification_url = f"{verification_url_base}/verify?token={token}"
     send_verification_email(
         user=user,
         email=email,
-        verification_url=verification_url,
+        otp_code=otp_code,
         university=university,
         expires_at=verification.expires_at,
     )
@@ -163,37 +165,64 @@ def request_verification(
     return VerificationRequestResult(cooldown_seconds=cooldown_seconds, expires_at=verification.expires_at)
 
 
-def confirm_verification(token: str) -> User:
-    """Mark the token as consumed and return the associated user."""
-
-    token_hash = VerificationToken.build_hash(token)
-    verification = (
-        VerificationToken.objects.select_related("user", "user__profile")
-        .filter(token_hash=token_hash)
-        .first()
-    )
-    if not verification:
-        raise VerificationFailure(_("Verification link is invalid or has expired."), code="invalid")
+def _get_active_tokens_for_email(normalized_email: str) -> Iterable[VerificationToken]:
+    """Return active OTP verification tokens for an email."""
 
     now = timezone.now()
-    if verification.consumed_at is not None or verification.expires_at <= now:
-        verification.mark_failed_attempt()
-        raise VerificationFailure(_("Verification link is invalid or has expired."), code="invalid")
+    return (
+        VerificationToken.objects.select_related("user", "user__profile")
+        .filter(
+            email__iexact=normalized_email,
+            token_type=VerificationToken.Types.OTP,
+            consumed_at__isnull=True,
+            expires_at__gt=now,
+        )
+        .order_by("-created_at")
+    )
 
-    if verification.is_locked:
-        raise VerificationFailure(_("Too many invalid attempts. Please request a new verification email."), code="locked")
 
-    verification.mark_consumed()
+def confirm_verification(email: str, otp_code: str) -> User:
+    """Validate an OTP verification code and mark the profile as verified."""
 
-    user = verification.user
-    if not user.email or user.email.lower() != verification.email.lower():
-        user.email = verification.email
+    normalized_email = normalize_email(email)
+    otp_hash = VerificationToken.build_hash(otp_code)
+
+    active_tokens = list(_get_active_tokens_for_email(normalized_email))
+    if not active_tokens:
+        raise VerificationFailure(_("Verification code is invalid or has expired."), code="invalid")
+
+    latest_token = active_tokens[0]
+    if latest_token.is_locked:
+        raise VerificationFailure(
+            _("Too many invalid attempts. Please request a new verification email."), code="locked"
+        )
+
+    matching = next((token for token in active_tokens if token.otp_code_hash == otp_hash), None)
+    if not matching:
+        latest_token.mark_failed_attempt()
+        if latest_token.is_locked:
+            raise VerificationFailure(
+                _("Too many invalid attempts. Please request a new verification email."),
+                code="locked",
+            )
+        raise VerificationFailure(_("Verification code is invalid or has expired."), code="invalid")
+
+    now = timezone.now()
+    if matching.expires_at <= now:
+        matching.mark_failed_attempt()
+        raise VerificationFailure(_("Verification code is invalid or has expired."), code="invalid")
+
+    matching.mark_consumed()
+
+    user = matching.user
+    if not user.email or user.email.lower() != matching.email.lower():
+        user.email = matching.email
         user.save(update_fields=["email"])
 
     profile: Profile = user.profile
     profile.email_verified_at = now
     profile.is_student_verified = True
-    profile.university_domain = verification.university_domain
+    profile.university_domain = matching.university_domain
     profile.save(update_fields=["email_verified_at", "is_student_verified", "university_domain"])
 
     return user

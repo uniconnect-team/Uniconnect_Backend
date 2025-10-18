@@ -119,11 +119,17 @@ class VerificationToken(models.Model):
         expires_at: datetime | None = None,
         created_ip: str | None = None,
         created_ua: str = "",
+        otp_code: str | None = None,
     ) -> "VerificationToken":
         if expires_at is None:
             expires_at = timezone.now() + timedelta(minutes=DEFAULT_VERIFY_TOKEN_TTL_MIN)
 
         token_hash = cls.build_hash(token)
+        otp_code_hash = ""
+        if token_type == cls.Types.OTP:
+            if otp_code is None:
+                raise ValueError("otp_code is required for OTP verification tokens")
+            otp_code_hash = cls.build_hash(otp_code)
 
         return cls.objects.create(
             user=user,
@@ -131,6 +137,7 @@ class VerificationToken(models.Model):
             token_type=token_type,
             email=email,
             university_domain=university_domain,
+            otp_code_hash=otp_code_hash,
             expires_at=expires_at,
             created_ip=created_ip,
             created_ua=created_ua[:512],

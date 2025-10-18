@@ -16,18 +16,40 @@ from .models import Profile, UniversityDomain, VerificationToken
 class AuthFlowTests(APITestCase):
     """Verify authentication endpoints behave as expected."""
 
+    @classmethod
+    def setUpTestData(cls) -> None:
+        UniversityDomain.objects.get_or_create(
+            domain="mail.aub.edu",
+            defaults={
+                "university_name": "American University of Beirut",
+                "country_code": "LB",
+            },
+        )
+
     def test_register_user(self) -> None:
         payload = {
             "full_name": "Alex Student",
             "phone": "+96171123456",
-            "email": "alex@test.com",
+            "email": "Alex@mail.aub.edu",
             "password": "Passw0rd1",
             "role": "SEEKER",
         }
         response = self.client.post(reverse("users:register"), payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["email"], payload["email"])
+        self.assertEqual(response.data["email"], payload["email"].lower())
         self.assertEqual(response.data["role"], payload["role"])
+
+    def test_register_seeker_rejects_non_allow_list_email(self) -> None:
+        payload = {
+            "full_name": "Alex Student",
+            "phone": "+96171123457",
+            "email": "alex@gmail.com",
+            "password": "Passw0rd1",
+            "role": "SEEKER",
+        }
+        response = self.client.post(reverse("users:register"), payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("supported institutions", str(response.data))
 
     def test_login_with_email(self) -> None:
         register_payload = {
@@ -52,7 +74,7 @@ class AuthFlowTests(APITestCase):
         register_payload = {
             "full_name": "Phone User",
             "phone": "+96171123458",
-            "email": "phone@test.com",
+            "email": "phone@mail.aub.edu",
             "password": "Passw0rd1",
             "role": "SEEKER",
         }
@@ -104,6 +126,8 @@ class VerifyEmailFlowTests(APITestCase):
         token = VerificationToken.objects.get(user=self.user)
         self.assertEqual(token.email, "name@mail.aub.edu")
         self.assertEqual(token.university_domain, self.domain.domain)
+        self.assertEqual(token.token_type, VerificationToken.Types.OTP)
+        self.assertTrue(token.otp_code_hash)
 
         self.user.refresh_from_db()
         profile = self.user.profile
@@ -130,13 +154,13 @@ class VerifyEmailFlowTests(APITestCase):
             format="json",
         )
         message = mail.outbox[-1]
-        token_match = re.search(r"token=([A-Za-z0-9_\-]+)", message.body)
-        self.assertIsNotNone(token_match)
-        token = token_match.group(1)
+        code_match = re.search(r"(\d{6})", message.body)
+        self.assertIsNotNone(code_match)
+        otp = code_match.group(1)
 
         response = self.client.post(
             reverse("users:verify-email-confirm"),
-            {"token": token},
+            {"email": "student@mail.aub.edu", "otp": otp},
             format="json",
         )
 
