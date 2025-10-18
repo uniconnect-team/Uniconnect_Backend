@@ -5,6 +5,7 @@ import re
 from datetime import timedelta
 from typing import Any, Dict
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils import timezone
@@ -13,7 +14,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Profile, UniversityDomain
+from .models import EmailOTP, PendingRegistration, Profile, UniversityDomain
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"
