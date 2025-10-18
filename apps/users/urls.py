@@ -21,4 +21,14 @@ urlpatterns = [
     path("verify-email/", VerifyEmailPageView.as_view(), name="verify-email-page"),
     path("verify-email/request/", VerifyEmailRequestView.as_view(), name="verify-email-request"),
     path("verify-email/confirm/", VerifyEmailConfirmView.as_view(), name="verify-email-confirm"),
+    path(
+        "seeker/verification/request/",
+        VerifyEmailRequestView.as_view(),
+        name="seeker-verify-email-request",
+    ),
+    path(
+        "seeker/verification/confirm/",
+        VerifyEmailConfirmView.as_view(),
+        name="seeker-verify-email-confirm",
+    ),
 ]
