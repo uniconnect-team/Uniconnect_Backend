@@ -133,6 +133,7 @@ SIMPLE_JWT = {
 VERIFY_TOKEN_TTL_MIN = env.int("VERIFY_TOKEN_TTL_MIN", default=15)
 VERIFY_RESEND_COOLDOWN_SEC = env.int("VERIFY_RESEND_COOLDOWN_SEC", default=60)
 VERIFY_MAX_DAILY_SENDS = env.int("VERIFY_MAX_DAILY_SENDS", default=5)
+VERIFY_MAX_ATTEMPTS = env.int("VERIFY_MAX_ATTEMPTS", default=5)
 
 EMAIL_BACKEND = env(
     "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
