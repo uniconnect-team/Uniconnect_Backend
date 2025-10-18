@@ -133,3 +133,18 @@ SIMPLE_JWT = {
 VERIFY_TOKEN_TTL_MIN = env.int("VERIFY_TOKEN_TTL_MIN", default=15)
 VERIFY_RESEND_COOLDOWN_SEC = env.int("VERIFY_RESEND_COOLDOWN_SEC", default=60)
 VERIFY_MAX_DAILY_SENDS = env.int("VERIFY_MAX_DAILY_SENDS", default=5)
+
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+)
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL", default="UniConnect <no-reply@uniconnect.local>"
+)
+
+EMAIL_HOST = env("EMAIL_HOST", default="")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_USE_SSL = env.bool("EMAIL_USE_SSL", default=False)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=30)

@@ -292,7 +292,13 @@ class VerificationRequestSerializer(serializers.Serializer):
         text_body = render_to_string("emails/verify_student_email.txt", context)
         html_body = render_to_string("emails/verify_student_email.html", context)
 
-        message = EmailMultiAlternatives(subject, text_body, to=[user.email])
+        from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None)
+        message = EmailMultiAlternatives(
+            subject,
+            text_body,
+            from_email=from_email,
+            to=[user.email],
+        )
         message.attach_alternative(html_body, "text/html")
         message.send(fail_silently=False)
 
