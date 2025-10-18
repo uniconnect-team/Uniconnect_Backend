@@ -73,9 +73,24 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def validate_email(self, value: str) -> str:
-        if User.objects.filter(email__iexact=value).exists():
+        normalized = normalize_email(value)
+        if User.objects.filter(email__iexact=normalized).exists():
             raise ConflictError(_("A user with this email already exists."))
-        return value
+        return normalized
+
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        attrs = super().validate(attrs)
+        email = attrs["email"]
+        role = attrs["role"]
+
+        if role == Profile.Roles.SEEKER:
+            domain = extract_domain(email)
+            if not get_matching_domain(domain):
+                raise serializers.ValidationError(
+                    {"email": _("Use a university email address from our supported institutions.")}
+                )
+
+        return attrs
 
     def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
         full_name: str = validated_data.get("full_name", "")
@@ -203,7 +218,7 @@ class VerifyEmailRequestSerializer(serializers.Serializer):
 
         tokens_qs = (
             VerificationToken.objects.for_user(user)
-            .filter(token_type=VerificationToken.Types.LINK)
+            .filter(token_type=VerificationToken.Types.OTP)
             .order_by("-created_at")
         )
         last_token = tokens_qs.first()
@@ -246,25 +261,30 @@ class VerifyEmailRequestSerializer(serializers.Serializer):
 
 
 class VerifyEmailConfirmSerializer(serializers.Serializer):
-    """Serializer for confirming verification tokens."""
+    """Serializer for confirming verification OTP codes."""
 
-    token = serializers.CharField()
+    email = serializers.EmailField()
+    otp = serializers.CharField()
 
     default_error_messages = {
-        "invalid": _("Verification link is invalid or has expired."),
+        "invalid": _("Verification code is invalid or has expired."),
         "locked": _("Too many invalid attempts. Please request a new verification email."),
     }
 
-    def validate_token(self, value: str) -> str:
+    def validate_email(self, value: str) -> str:
+        return normalize_email(value)
+
+    def validate_otp(self, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
-            raise serializers.ValidationError(_("Token is required."), code="required")
+            raise serializers.ValidationError(_("Verification code is required."), code="required")
+        if not cleaned.isdigit() or len(cleaned) != 6:
+            raise serializers.ValidationError(_("Enter the 6-digit code we emailed you."), code="invalid")
         return cleaned
 
     def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
-        token = validated_data["token"]
         try:
-            confirm_verification(token)
+            confirm_verification(validated_data["email"], validated_data["otp"])
         except VerificationFailure as exc:
             raise serializers.ValidationError(str(exc), code=exc.code) from exc
         except Exception as exc:  # pragma: no cover - defensive logging

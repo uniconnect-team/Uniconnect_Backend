@@ -2,9 +2,9 @@ Hi {{ name }},
 
 Thanks for joining UniConnect! Please confirm your student email for {{ university_name }}.
 
-Verify now: {{ verification_url }}
+Your one-time verification code is: {{ otp_code }}
 
-This link expires in {{ expires_in_minutes }} minutes. If you didn't request this, you can safely ignore the message.
+This code expires in {{ expires_in_minutes }} minutes. Head to {{ app_url }}/verify-email to finish verification. If you didn't request this, you can safely ignore the message.
 
 Stay connected,
 UniConnect Team

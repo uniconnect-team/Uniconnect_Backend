@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{ page_title }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --primary: #10b981;
+        --primary-dark: #0f766e;
+        --bg: #0f172a;
+        --card: #111827;
+        --text: #f9fafb;
+        --muted: #9ca3af;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        background: radial-gradient(circle at top, rgba(16, 185, 129, 0.12), transparent 55%), var(--bg);
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px 16px;
+      }
+
+      .container {
+        width: min(960px, 100%);
+        display: grid;
+        gap: 24px;
+      }
+
+      @media (min-width: 900px) {
+        .container {
+          grid-template-columns: 3fr 2fr;
+        }
+      }
+
+      .card {
+        background: linear-gradient(165deg, rgba(17, 24, 39, 0.92), rgba(17, 24, 39, 0.74));
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 18px;
+        padding: 32px;
+        box-shadow: 0 25px 60px rgba(15, 23, 42, 0.45);
+        backdrop-filter: blur(8px);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 2.8vw, 2.6rem);
+        color: #ecfdf5;
+      }
+
+      p.lead {
+        color: var(--muted);
+        margin-bottom: 28px;
+      }
+
+      form {
+        display: grid;
+        gap: 16px;
+      }
+
+      label {
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+
+      input {
+        width: 100%;
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(15, 23, 42, 0.65);
+        color: var(--text);
+        font-size: 1rem;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      input:focus {
+        outline: none;
+        border-color: rgba(16, 185, 129, 0.65);
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.25);
+      }
+
+      button {
+        appearance: none;
+        border: none;
+        border-radius: 999px;
+        padding: 14px 22px;
+        font-weight: 600;
+        font-size: 1rem;
+        color: #0f172a;
+        background: linear-gradient(135deg, var(--primary), #34d399);
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(16, 185, 129, 0.25);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+        transform: none;
+      }
+
+      .status {
+        min-height: 24px;
+        font-size: 0.9rem;
+      }
+
+      .status.ok {
+        color: #a7f3d0;
+      }
+
+      .status.error {
+        color: #fca5a5;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(16, 185, 129, 0.12);
+        color: #6ee7b7;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .support-card {
+        background: linear-gradient(165deg, rgba(30, 64, 175, 0.9), rgba(5, 150, 105, 0.85));
+      }
+
+      .support-card h2 {
+        margin-top: 0;
+        color: #f8fafc;
+        font-size: 1.4rem;
+      }
+
+      .support-card p {
+        color: rgba(241, 245, 249, 0.8);
+        line-height: 1.6;
+      }
+
+      code {
+        background: rgba(15, 23, 42, 0.6);
+        border-radius: 6px;
+        padding: 2px 6px;
+        font-size: 0.85em;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <section class="card">
+        <span class="badge">Step 2 · Email verification</span>
+        <h1>Verify your student email</h1>
+        <p class="lead">
+          Enter the 6-digit code we just sent to your university inbox. This keeps UniConnect exclusive to
+          verified students.
+        </p>
+        <form id="verify-form">
+          <div>
+            <label for="verify-email">University email</label>
+            <input id="verify-email" name="email" type="email" placeholder="you@mail.aub.edu" required />
+          </div>
+          <div>
+            <label for="verify-code">Verification code</label>
+            <input
+              id="verify-code"
+              name="otp"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              placeholder="000000"
+              maxlength="6"
+              required
+            />
+          </div>
+          <button type="submit">Confirm email</button>
+          <p id="verify-status" class="status" role="status"></p>
+        </form>
+      </section>
+
+      <aside class="card support-card">
+        <h2>Need a new code?</h2>
+        <p>
+          Make sure you are signed in, then request another verification email. We only send codes to
+          approved Lebanese university domains.
+        </p>
+        <form id="request-form">
+          <div>
+            <label for="request-email">University email</label>
+            <input id="request-email" type="email" placeholder="you@mail.aub.edu" required />
+          </div>
+          <div>
+            <label for="request-token">Access token (optional)</label>
+            <input
+              id="request-token"
+              type="text"
+              placeholder="Paste your JWT if it isn't saved in this browser"
+            />
+          </div>
+          <button type="submit">Send me a new code</button>
+          <p id="request-status" class="status" role="status"></p>
+          <p style="font-size: 0.85rem; margin-top: 8px;">
+            Tip: if you already signed in, we will use the access token stored in your browser automatically.
+          </p>
+        </form>
+      </aside>
+    </main>
+
+    <script>
+      const API_BASE = "/api/v1/auth";
+
+      const statusMessage = (element, message, isError = false) => {
+        if (!element) return;
+        element.textContent = message;
+        element.classList.remove("ok", "error");
+        element.classList.add(isError ? "error" : "ok");
+      };
+
+      const getStoredAccessToken = () => {
+        const storage = window.localStorage;
+        if (!storage) return "";
+        const candidateKeys = ["uniconnectAccessToken", "accessToken", "token", "authToken"];
+        for (const key of candidateKeys) {
+          const value = storage.getItem(key);
+          if (value) {
+            return value.replace(/^"|"$/g, "");
+          }
+        }
+        return "";
+      };
+
+      document.getElementById("verify-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const email = document.getElementById("verify-email").value.trim();
+        const otp = document.getElementById("verify-code").value.trim();
+        const statusEl = document.getElementById("verify-status");
+        statusMessage(statusEl, "Checking code...");
+
+        try {
+          const response = await fetch(`${API_BASE}/verify-email/confirm/`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ email, otp }),
+          });
+
+          const payload = await response.json();
+          if (!response.ok) {
+            const detail = Array.isArray(payload) ? payload.join(" ") : Object.values(payload).join(" ");
+            throw new Error(detail || "Verification failed. Please try again.");
+          }
+
+          statusMessage(statusEl, "Great! Your email is verified. You can continue using UniConnect.");
+          form.reset();
+        } catch (error) {
+          statusMessage(statusEl, error.message || "Verification failed.", true);
+        }
+      });
+
+      document.getElementById("request-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const email = document.getElementById("request-email").value.trim();
+        const tokenField = document.getElementById("request-token");
+        const accessToken = tokenField.value.trim() || getStoredAccessToken();
+        const statusEl = document.getElementById("request-status");
+
+        if (!accessToken) {
+          statusMessage(statusEl, "Sign in first so we can verify your identity.", true);
+          return;
+        }
+
+        statusMessage(statusEl, "Sending a new code...");
+
+        try {
+          const response = await fetch(`${API_BASE}/verify-email/request/`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ email }),
+          });
+
+          const payload = await response.json();
+          if (!response.ok) {
+            const errors =
+              payload?.non_field_errors || payload?.detail || Object.values(payload || {}).flat().join(" ");
+            throw new Error(errors || "We couldn't send a code right now.");
+          }
+
+          const cooldown = payload.cooldownSeconds ? ` Try again in ${payload.cooldownSeconds}s.` : "";
+          statusMessage(statusEl, `Code sent! Check your inbox.${cooldown}`);
+          tokenField.value = "";
+        } catch (error) {
+          statusMessage(statusEl, error.message || "We couldn't send a code.", true);
+        }
+      });
+    </script>
+  </body>
+</html>
