@@ -3,23 +3,20 @@ from __future__ import annotations
 
 import random
 import re
-import secrets
 from datetime import timedelta
 from typing import Any, Dict
 
 from django.conf import settings
-from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
-from django.core.mail import EmailMultiAlternatives
 from django.db import IntegrityError, transaction
-from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers, status
 from rest_framework.exceptions import APIException, AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailVerificationToken, Profile, UniversityDomain
+from .models import EmailOTP, Profile, UniversityDomain
+from .services.verification import confirm_code, send_verification
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"
@@ -222,11 +219,7 @@ class VerificationRequestSerializer(serializers.Serializer):
         now = timezone.now()
         cooldown_seconds = self.context["cooldown"]
         recent_token = (
-            EmailVerificationToken.objects.filter(
-                user=user,
-                method=EmailVerificationToken.Methods.OTP,
-                consumed_at__isnull=True,
-            )
+            EmailOTP.objects.filter(email=email)
             .order_by("-created_at")
             .first()
         )
@@ -238,8 +231,8 @@ class VerificationRequestSerializer(serializers.Serializer):
 
         daily_limit = getattr(settings, "VERIFY_MAX_DAILY_SENDS", 5)
         day_start = now - timedelta(hours=24)
-        sent_today = EmailVerificationToken.objects.filter(
-            user=user,
+        sent_today = EmailOTP.objects.filter(
+            email=email,
             created_at__gte=day_start,
         ).count()
         if sent_today >= daily_limit:
@@ -253,48 +246,16 @@ class VerificationRequestSerializer(serializers.Serializer):
         user: User | None = self.context.get("user")
         domain: UniversityDomain = self.context["domain"]
         cooldown_seconds: int = self.context["cooldown"]
+        email = self.validated_data["email"]
         if not user:
             return {"ok": True, "cooldownSeconds": cooldown_seconds}
 
-        EmailVerificationToken.objects.filter(
-            user=user,
-            method=EmailVerificationToken.Methods.OTP,
-            consumed_at__isnull=True,
-        ).update(consumed_at=timezone.now())
-
-        otp_code = f"{random.randint(0, 999999):06d}"
-        token_value = secrets.token_urlsafe(32)
-        expires_at = timezone.now() + timedelta(
-            minutes=getattr(settings, "VERIFY_TOKEN_TTL_MIN", 15)
+        send_verification(
+            email=email,
+            full_name=getattr(user.profile, "full_name", user.username),
+            university_domain=domain.domain,
+            ip=self.context.get("ip"),
         )
-
-        ip_address = self.context.get("ip")
-        user_agent = (self.context.get("user_agent") or "")[:512]
-
-        EmailVerificationToken.objects.create(
-            user=user,
-            token_hash=make_password(token_value),
-            otp_hash=make_password(otp_code),
-            method=EmailVerificationToken.Methods.OTP,
-            expires_at=expires_at,
-            created_ip=ip_address,
-            created_ua=user_agent,
-        )
-
-        context = {
-            "full_name": getattr(user.profile, "full_name", user.username),
-            "code": otp_code,
-            "expiry_minutes": getattr(settings, "VERIFY_TOKEN_TTL_MIN", 15),
-            "university_domain": domain.domain,
-        }
-
-        subject = "Verify your UniConnect student email"
-        text_body = render_to_string("emails/verify_student_email.txt", context)
-        html_body = render_to_string("emails/verify_student_email.html", context)
-
-        message = EmailMultiAlternatives(subject, text_body, to=[user.email])
-        message.attach_alternative(html_body, "text/html")
-        message.send(fail_silently=False)
 
         return {"ok": True, "cooldownSeconds": cooldown_seconds}
 
@@ -310,51 +271,36 @@ class VerificationConfirmSerializer(serializers.Serializer):
 
     def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         email = attrs["email"]
-        code = attrs["code"]
         user = User.objects.filter(email__iexact=email).select_related("profile").first()
         if not user:
             raise serializers.ValidationError(
                 _("The verification code is invalid."),
                 code="invalid_code",
             )
-
-        token = (
-            EmailVerificationToken.objects.filter(
-                user=user,
-                method=EmailVerificationToken.Methods.OTP,
-                consumed_at__isnull=True,
-            )
-            .order_by("-created_at")
-            .first()
-        )
-
-        if not token:
-            raise serializers.ValidationError(
-                _("The verification code is invalid."),
-                code="invalid_code",
-            )
-
-        if token.is_expired:
-            raise serializers.ValidationError(
-                _("The verification code has expired."),
-                code="expired_code",
-            )
-
-        if not token.otp_hash or not check_password(code, token.otp_hash):
-            raise serializers.ValidationError(
-                _("The verification code is invalid."),
-                code="invalid_code",
-            )
-
         self.context["user"] = user
-        self.context["token"] = token
         return attrs
 
     def save(self, **kwargs) -> Dict[str, Any]:
         user: User = self.context["user"]
-        token: EmailVerificationToken = self.context["token"]
         profile = user.profile
 
+        success, result = confirm_code(
+            email=self.validated_data["email"],
+            code=self.validated_data["code"],
+        )
+
+        if not success:
+            if result == "expired":
+                raise serializers.ValidationError(
+                    _("The verification code has expired."),
+                    code="expired_code",
+                )
+            raise serializers.ValidationError(
+                _("The verification code is invalid."),
+                code="invalid_code",
+            )
+
+        otp: EmailOTP = result
         now = timezone.now()
         profile.is_student_verified = True
         profile.email_verified_at = now
@@ -363,8 +309,8 @@ class VerificationConfirmSerializer(serializers.Serializer):
         domain = UniversityDomain.objects.filter(domain__iexact=domain_value).first()
         profile.university_domain = domain
         profile.save(update_fields=["is_student_verified", "email_verified_at", "university_domain"])
-
-        token.consumed_at = now
-        token.save(update_fields=["consumed_at"])
+        if otp.used_at is None:
+            otp.used_at = now
+            otp.save(update_fields=["used_at"])
 
         return {"ok": True}
