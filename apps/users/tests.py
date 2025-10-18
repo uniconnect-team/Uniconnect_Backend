@@ -145,3 +145,25 @@ class AuthFlowTests(APITestCase):
         )
         self.assertEqual(confirm_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(confirm_response.data["non_field_errors"][0].code, "expired_code")
+
+    def test_seeker_alias_verification_endpoints(self) -> None:
+        self._register_user()
+        request_response = self.client.post(
+            reverse("users:seeker-verify-email-request"),
+            {"email": "student@mail.aub.edu"},
+            format="json",
+        )
+        self.assertEqual(request_response.status_code, status.HTTP_200_OK)
+
+        token = EmailVerificationToken.objects.latest("created_at")
+        message = mail.outbox[-1]
+        match = re.search(r"(\d{6})", message.body)
+        code = match.group(1) if match else "000000"
+
+        confirm_response = self.client.post(
+            reverse("users:seeker-verify-email-confirm"),
+            {"email": "student@mail.aub.edu", "code": code},
+            format="json",
+        )
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(confirm_response.data["ok"])
