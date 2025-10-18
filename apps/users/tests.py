@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
 from django.urls import reverse
@@ -75,6 +76,7 @@ class AuthFlowTests(APITestCase):
         self.assertGreater(len(mail.outbox), 0)
 
         message = mail.outbox[-1]
+        self.assertEqual(message.from_email, settings.DEFAULT_FROM_EMAIL)
         match = re.search(r"(\d{6})", message.body)
         self.assertIsNotNone(match)
         code = match.group(1) if match else "000000"
