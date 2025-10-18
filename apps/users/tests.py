@@ -1,12 +1,15 @@
 """Tests for the users app."""
 from __future__ import annotations
 
+import re
+
 from django.contrib.auth.models import User
+from django.core import mail
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Profile, UniversityDomain
+from .models import PendingRegistration, Profile, UniversityDomain
 
 
 class AuthFlowTests(APITestCase):
