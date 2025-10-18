@@ -48,30 +48,21 @@ class Profile(models.Model):
         return f"Profile({self.user.username})"
 
 
-class EmailVerificationToken(models.Model):
-    """Stores one-time passwords for verifying university emails."""
+class EmailOTP(models.Model):
+    """Stores hashed one-time passwords for email verification."""
 
-    class Methods(models.TextChoices):
-        OTP = "otp", "OTP"
-
-    user = models.ForeignKey(User, related_name="email_tokens", on_delete=models.CASCADE)
-    token_hash = models.CharField(max_length=255)
-    otp_hash = models.CharField(max_length=255, null=True, blank=True)
-    method = models.CharField(max_length=20, choices=Methods.choices, default=Methods.OTP)
+    email = models.EmailField(db_index=True)
+    code_hash = models.CharField(max_length=128)
     expires_at = models.DateTimeField()
-    consumed_at = models.DateTimeField(null=True, blank=True)
-    resend_count = models.PositiveIntegerField(default=0)
+    used_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
     created_ip = models.GenericIPAddressField(null=True, blank=True)
-    created_ua = models.CharField(max_length=512, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [models.Index(fields=["email"])]
 
     @property
-    def is_consumed(self) -> bool:
-        return self.consumed_at is not None
-
-    @property
-    def is_expired(self) -> bool:
-        return timezone.now() >= self.expires_at
+    def is_active(self) -> bool:
+        return self.used_at is None and self.expires_at > timezone.now()

@@ -12,7 +12,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import EmailVerificationToken, Profile, UniversityDomain
+from .models import EmailOTP, Profile, UniversityDomain
 
 
 class AuthFlowTests(APITestCase):
@@ -96,8 +96,8 @@ class AuthFlowTests(APITestCase):
         self.assertIsNotNone(profile.university_domain)
         self.assertEqual(profile.university_domain.domain, "mail.aub.edu")
 
-        token = EmailVerificationToken.objects.filter(user=user).latest("created_at")
-        self.assertIsNotNone(token.consumed_at)
+        otp = EmailOTP.objects.filter(email="student@mail.aub.edu").latest("created_at")
+        self.assertIsNotNone(otp.used_at)
 
         # Check /me endpoint reflects verification status
         login_response = self.client.post(
@@ -136,9 +136,9 @@ class AuthFlowTests(APITestCase):
         )
         self.assertEqual(request_response.status_code, status.HTTP_200_OK)
 
-        token = EmailVerificationToken.objects.latest("created_at")
-        token.expires_at = timezone.now() - timedelta(minutes=1)
-        token.save(update_fields=["expires_at"])
+        otp = EmailOTP.objects.latest("created_at")
+        otp.expires_at = timezone.now() - timedelta(minutes=1)
+        otp.save(update_fields=["expires_at"])
 
         confirm_response = self.client.post(
             reverse("users:verify-email-confirm"),
@@ -157,7 +157,7 @@ class AuthFlowTests(APITestCase):
         )
         self.assertEqual(request_response.status_code, status.HTTP_200_OK)
 
-        token = EmailVerificationToken.objects.latest("created_at")
+        otp = EmailOTP.objects.latest("created_at")
         message = mail.outbox[-1]
         match = re.search(r"(\d{6})", message.body)
         code = match.group(1) if match else "000000"

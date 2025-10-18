@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import EmailVerificationToken, Profile, UniversityDomain
+from .models import EmailOTP, Profile, UniversityDomain
 
 
 @admin.register(Profile)
@@ -28,14 +28,8 @@ class UniversityDomainAdmin(admin.ModelAdmin):
     search_fields = ("domain", "university_name")
 
 
-@admin.register(EmailVerificationToken)
-class EmailVerificationTokenAdmin(admin.ModelAdmin):
-    list_display = (
-        "user",
-        "method",
-        "expires_at",
-        "consumed_at",
-        "created_at",
-    )
-    search_fields = ("user__email", "user__username")
-    list_filter = ("method", "consumed_at")
+@admin.register(EmailOTP)
+class EmailOTPAdmin(admin.ModelAdmin):
+    list_display = ("email", "expires_at", "used_at", "attempts", "created_at")
+    search_fields = ("email",)
+    list_filter = ("used_at",)
