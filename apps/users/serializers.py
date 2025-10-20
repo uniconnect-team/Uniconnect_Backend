@@ -442,3 +442,71 @@ class MeSerializer(serializers.ModelSerializer):
     def get_default_home_path(self, obj: User) -> str:
         profile = getattr(obj, "profile", None)
         return _resolve_default_home_path(profile)
+    
+
+class UpdateProfileSerializer(serializers.Serializer):
+
+    
+    full_name = serializers.CharField(max_length=200, required=False)
+    phone = serializers.CharField(max_length=20, required=False)
+    email = serializers.EmailField(required=False)
+    date_of_birth = serializers.DateField(required=False)
+    
+    def validate_phone(self, value: str) -> str:
+        user = self.context.get('user')
+        # Allow keeping the same phone or changing to a new unique one
+        existing = Profile.objects.filter(phone=value).exclude(user=user).exists()
+        if existing:
+            raise serializers.ValidationError(_("Phone number must be unique."))
+        return value
+    
+    def validate_email(self, value: str) -> str:
+        user = self.context.get('user')
+        value = _normalize_email(value)
+        profile = getattr(user, 'profile', None)
+        
+        # Seekers cannot change their email
+        if profile and profile.role == Profile.Roles.SEEKER:
+            if value != user.email:
+                raise serializers.ValidationError(
+                    _("University email cannot be changed."),
+                    code="email_locked"
+                )
+        
+        # For owners, check uniqueness
+        existing = User.objects.filter(email__iexact=value).exclude(id=user.id).exists()
+        if existing:
+            raise serializers.ValidationError(_("Email already in use."))
+        return value
+    
+    def validate_date_of_birth(self, value):
+        from datetime import date
+        today = date.today()
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+        if age < 16:
+            raise serializers.ValidationError(_("You must be at least 16 years old."))
+        if age > 100:
+            raise serializers.ValidationError(_("Please enter a valid date of birth."))
+        return value
+    
+    def update_profile(self, user: User, validated_data: Dict[str, Any]) -> Profile:
+        profile = user.profile
+        
+        # Update profile fields
+        if 'full_name' in validated_data:
+            profile.full_name = validated_data['full_name']
+        if 'phone' in validated_data:
+            profile.phone = validated_data['phone']
+        if 'date_of_birth' in validated_data:
+            profile.date_of_birth = validated_data['date_of_birth']
+        
+        profile.save()
+        
+        # Update user email if provided and allowed (owners only)
+        if 'email' in validated_data and profile.role == Profile.Roles.OWNER:
+            user.email = validated_data['email']
+            user.save()
+        
+        return profile
+    
+   

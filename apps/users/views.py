@@ -14,6 +14,7 @@ from .serializers import (
     OwnerRegisterSerializer,
     RegisterSerializer,
     SeekerProfileCompletionSerializer,
+    UpdateProfileSerializer,  
     _build_user_payload,
 )
 
@@ -108,3 +109,23 @@ class MeView(generics.RetrieveAPIView):
 
     def get_object(self):
         return self.request.user
+    
+class UpdateProfileView(APIView):
+    """Handle profile updates for authenticated users."""
+    
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, *args, **kwargs):
+        serializer = UpdateProfileSerializer(
+            data=request.data,
+            context={'user': request.user, 'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.update_profile(request.user, serializer.validated_data)
+        
+        # Return updated user data
+        return Response(
+            _build_user_payload(request.user),
+            status=status.HTTP_200_OK
+        )
+    
