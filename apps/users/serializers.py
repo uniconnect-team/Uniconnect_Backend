@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Dict
 
 from django.conf import settings
@@ -40,7 +40,16 @@ def _resolve_default_home_path(profile: Profile | None) -> str:
 
     if not profile:
         return "/home"
+    
+    # Check if profile is incomplete - redirect to role-specific completion page
+    if not profile.profile_completed:
+        if profile.role == Profile.Roles.OWNER:
+            return "/complete-profile/owner"
+        if profile.role == Profile.Roles.SEEKER:
+            return "/complete-profile/seeker"
+        return "/complete-profile/seeker"
 
+    # Profile is complete - go to role-specific home
     if profile.role == Profile.Roles.OWNER:
         return "/owners/dashboard"
 
@@ -73,6 +82,8 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
         "is_student_verified": getattr(profile, "is_student_verified", False),
         "email_verified_at": getattr(profile, "email_verified_at", None),
         "university_domain": getattr(university_domain, "domain", ""),
+        "date_of_birth": getattr(profile, "date_of_birth", None),
+        "profile_completed": getattr(profile, "profile_completed", False),
         "properties": properties,
         "default_home_path": _resolve_default_home_path(profile),
     }
@@ -87,7 +98,7 @@ class RegisterSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, min_length=8)
     role = serializers.ChoiceField(choices=Profile.Roles.choices)
 
-    def validate_password(self, value: str) -> str:  # noqa: D401 - delegated helper
+    def validate_password(self, value: str) -> str:
         return _validate_password_strength(value)
 
     def validate_email(self, value: str) -> str:
@@ -199,6 +210,7 @@ class RegisterSerializer(serializers.Serializer):
             is_student_verified=is_student,
             email_verified_at=timezone.now() if is_student else None,
             university_domain=domain if is_student else None,
+            profile_completed=False,  # ALWAYS False on registration
         )
         return user, profile
 
@@ -224,7 +236,7 @@ class OwnerRegisterSerializer(RegisterSerializer):
     properties = PropertyInputSerializer(many=True)
     role = serializers.HiddenField(default=Profile.Roles.OWNER)
 
-    def validate_email(self, value: str) -> str:  # noqa: D401 - delegated helper
+    def validate_email(self, value: str) -> str:
         value = _normalize_email(value)
 
         if User.objects.filter(email__iexact=value).exists():
@@ -312,6 +324,74 @@ class LoginSerializer(serializers.Serializer):
         }
 
 
+class ProfileCompletionSerializer(serializers.Serializer):
+    """Base serializer for completing user profiles after registration."""
+    
+    full_name = serializers.CharField(max_length=200)
+    phone = serializers.CharField(max_length=20)
+    
+    def validate_phone(self, value: str) -> str:
+        user = self.context.get('user')
+        # Allow keeping the same phone or changing to a new unique one
+        existing = Profile.objects.filter(phone=value).exclude(user=user).exists()
+        if existing:
+            raise serializers.ValidationError(_("Phone number must be unique."))
+        return value
+    
+    def update_profile(self, user: User, validated_data: Dict[str, Any]) -> Profile:
+        profile = user.profile
+        profile.full_name = validated_data['full_name']
+        profile.phone = validated_data['phone']
+        profile.profile_completed = True
+        profile.save()
+        return profile
+
+
+class SeekerProfileCompletionSerializer(ProfileCompletionSerializer):
+    """Serializer for seekers to complete their profile."""
+    
+    date_of_birth = serializers.DateField()
+    
+    def validate_date_of_birth(self, value):
+        today = date.today()
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+        if age < 16:
+            raise serializers.ValidationError(_("You must be at least 16 years old."))
+        if age > 100:
+            raise serializers.ValidationError(_("Please enter a valid date of birth."))
+        return value
+    
+    def update_profile(self, user: User, validated_data: Dict[str, Any]) -> Profile:
+        profile = super().update_profile(user, validated_data)
+        profile.date_of_birth = validated_data['date_of_birth']
+        profile.save()
+        return profile
+
+
+class OwnerProfileCompletionSerializer(ProfileCompletionSerializer):
+    """Serializer for owners to complete their profile."""
+    
+    email = serializers.EmailField()
+    
+    def validate_email(self, value: str) -> str:
+        user = self.context.get('user')
+        value = _normalize_email(value)
+        # Allow keeping the same email or changing to a new unique one
+        existing = User.objects.filter(email__iexact=value).exclude(id=user.id).exists()
+        if existing:
+            raise serializers.ValidationError(_("Email already in use."))
+        return value
+    
+    def update_profile(self, user: User, validated_data: Dict[str, Any]) -> Profile:
+        profile = super().update_profile(user, validated_data)
+        # Update user email if owner wants to change it
+        email = validated_data.get('email')
+        if email and email != user.email:
+            user.email = email
+            user.save()
+        return profile
+
+
 class MeSerializer(serializers.ModelSerializer):
     """Serializer returning the authenticated user's profile."""
 
@@ -323,6 +403,8 @@ class MeSerializer(serializers.ModelSerializer):
     university_domain = serializers.CharField(
         source="profile.university_domain.domain", read_only=True, default=""
     )
+    date_of_birth = serializers.DateField(source="profile.date_of_birth", read_only=True)
+    profile_completed = serializers.BooleanField(source="profile.profile_completed", read_only=True)
     properties = serializers.SerializerMethodField()
     default_home_path = serializers.SerializerMethodField()
 
@@ -338,6 +420,8 @@ class MeSerializer(serializers.ModelSerializer):
             "is_student_verified",
             "email_verified_at",
             "university_domain",
+            "date_of_birth",
+            "profile_completed",
             "properties",
             "default_home_path",
         )

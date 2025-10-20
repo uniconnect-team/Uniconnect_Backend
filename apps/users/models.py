@@ -44,6 +44,8 @@ class Profile(models.Model):
         null=True,
         blank=True,
     )
+    date_of_birth = models.DateField(null=True, blank=True)  # NEW FIELD
+    profile_completed = models.BooleanField(default=False)  # NEW FIELD
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
@@ -133,5 +135,3 @@ class Property(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable representation
         return f"Property(name={self.name}, owner={self.owner_id})"
-
-

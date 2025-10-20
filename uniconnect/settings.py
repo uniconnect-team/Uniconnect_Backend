@@ -67,11 +67,17 @@ TEMPLATES = [
 WSGI_APPLICATION = "uniconnect.wsgi.application"
 ASGI_APPLICATION = "uniconnect.asgi.application"
 
+##DATABASES = {
+  ##  "default": env.db(
+    #    "DATABASE_URL",
+     #   default="postgres://postgres:postgres@localhost:5432/uniconnect",
+    #)
+#}
 DATABASES = {
-    "default": env.db(
-        "DATABASE_URL",
-        default="postgres://postgres:postgres@localhost:5432/uniconnect",
-    )
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+    }
 }
 
 AUTH_PASSWORD_VALIDATORS = [
