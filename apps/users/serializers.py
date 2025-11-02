@@ -14,7 +14,15 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailOTP, PendingRegistration, Profile, Property, UniversityDomain
+from .models import (
+    EmailOTP,
+    PendingRegistration,
+    Profile,
+    Property,
+    PropertyImage,
+    PropertyRoom,
+    UniversityDomain,
+)
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"
@@ -56,11 +64,7 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
     properties: list[dict[str, Any]] = []
     if profile and profile.role == Profile.Roles.OWNER:
         properties = [
-            {
-                "id": prop.id,
-                "name": prop.name,
-                "location": prop.location,
-            }
+            _serialize_property_summary(prop)
             for prop in profile.properties.all().order_by("name")
         ]
     return {
@@ -76,6 +80,194 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
         "properties": properties,
         "default_home_path": _resolve_default_home_path(profile),
     }
+
+
+def _serialize_property_summary(prop: Property) -> dict[str, Any]:
+    return {
+        "id": prop.id,
+        "name": prop.name,
+        "location": prop.location,
+        "description": prop.description,
+        "latitude": prop.latitude,
+        "longitude": prop.longitude,
+        "has_electricity_included": prop.has_electricity_included,
+        "has_cleaning_service": prop.has_cleaning_service,
+        "additional_services": prop.additional_services,
+        "rooms": [
+            {
+                "id": room.id,
+                "room_type": room.room_type,
+                "total_rooms": room.total_rooms,
+                "available_rooms": room.available_rooms,
+                "price_per_month": room.price_per_month,
+                "notes": room.notes,
+            }
+            for room in prop.rooms.all().order_by("room_type")
+        ],
+        "images": [
+            {
+                "id": image.id,
+                "image_url": image.image_url,
+                "caption": image.caption,
+            }
+            for image in prop.images.all().order_by("-uploaded_at")
+        ],
+        "created_at": prop.created_at,
+        "updated_at": prop.updated_at,
+    }
+
+
+def _create_property_with_nested(owner: Profile, property_data: dict[str, Any]) -> Property:
+    images_data = property_data.pop("images", [])
+    rooms_data = property_data.pop("rooms", [])
+    property_obj = Property.objects.create(owner=owner, **property_data)
+    _replace_property_images(property_obj, images_data)
+    _replace_property_rooms(property_obj, rooms_data)
+    return property_obj
+
+
+def _replace_property_images(property_obj: Property, images_data: list[dict[str, Any]]) -> None:
+    property_obj.images.all().delete()
+    PropertyImage.objects.bulk_create(
+        [
+            PropertyImage(
+                property=property_obj,
+                image_url=image_info["image_url"],
+                caption=image_info.get("caption", ""),
+            )
+            for image_info in images_data
+        ]
+    )
+
+
+def _replace_property_rooms(property_obj: Property, rooms_data: list[dict[str, Any]]) -> None:
+    property_obj.rooms.all().delete()
+    PropertyRoom.objects.bulk_create(
+        [
+            PropertyRoom(
+                property=property_obj,
+                room_type=room_info["room_type"],
+                total_rooms=room_info["total_rooms"],
+                available_rooms=room_info["available_rooms"],
+                price_per_month=room_info.get("price_per_month"),
+                notes=room_info.get("notes", ""),
+            )
+            for room_info in rooms_data
+        ]
+    )
+
+
+class PropertyImageSerializer(serializers.ModelSerializer):
+    """Serializer for property images."""
+
+    class Meta:
+        model = PropertyImage
+        fields = ("id", "image_url", "caption", "uploaded_at")
+        read_only_fields = ("id", "uploaded_at")
+
+
+class PropertyRoomSerializer(serializers.ModelSerializer):
+    """Serializer describing room availability for a property."""
+
+    class Meta:
+        model = PropertyRoom
+        fields = (
+            "id",
+            "room_type",
+            "total_rooms",
+            "available_rooms",
+            "price_per_month",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        total_rooms = attrs.get("total_rooms", getattr(self.instance, "total_rooms", 0))
+        available_rooms = attrs.get(
+            "available_rooms",
+            getattr(self.instance, "available_rooms", 0),
+        )
+        if available_rooms > total_rooms:
+            raise serializers.ValidationError(
+                _("Available rooms cannot exceed the total number of rooms."),
+            )
+        return attrs
+
+
+class PropertySerializer(serializers.ModelSerializer):
+    """Serializer used for creating and updating owner properties."""
+
+    images = PropertyImageSerializer(many=True, required=False)
+    rooms = PropertyRoomSerializer(many=True, required=False)
+
+    class Meta:
+        model = Property
+        fields = (
+            "id",
+            "name",
+            "location",
+            "description",
+            "latitude",
+            "longitude",
+            "has_electricity_included",
+            "has_cleaning_service",
+            "additional_services",
+            "images",
+            "rooms",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate_rooms(self, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if value is None:
+            return []
+        seen: set[tuple[str, str]] = set()
+        for room in value:
+            key = (room["room_type"], room.get("notes", ""))
+            if key in seen:
+                raise serializers.ValidationError(
+                    _("Room entries must be unique for each type and notes combination."),
+                )
+            seen.add(key)
+        return value
+
+    def validate_images(self, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if value is None:
+            return []
+        seen_urls: set[str] = set()
+        for image in value:
+            url = image["image_url"].strip()
+            if url in seen_urls:
+                raise serializers.ValidationError(
+                    _("Duplicate image URLs are not allowed."),
+                )
+            seen_urls.add(url)
+        return value
+
+    def create(self, validated_data: dict[str, Any]) -> Property:
+        owner: Profile | None = self.context.get("owner")
+        owner = validated_data.pop("owner", owner)
+        if owner is None:
+            raise serializers.ValidationError({"owner": _("Owner profile is required.")})
+        return _create_property_with_nested(owner, validated_data)
+
+    def update(self, instance: Property, validated_data: dict[str, Any]) -> Property:
+        images_data = validated_data.pop("images", None)
+        rooms_data = validated_data.pop("rooms", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if images_data is not None:
+            _replace_property_images(instance, images_data)
+        if rooms_data is not None:
+            _replace_property_rooms(instance, rooms_data)
+
+        return instance
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -220,6 +412,24 @@ class OwnerRegisterSerializer(RegisterSerializer):
     class PropertyInputSerializer(serializers.Serializer):
         name = serializers.CharField(max_length=255)
         location = serializers.CharField(max_length=255)
+        description = serializers.CharField(required=False, allow_blank=True)
+        latitude = serializers.DecimalField(
+            max_digits=9,
+            decimal_places=6,
+            required=False,
+            allow_null=True,
+        )
+        longitude = serializers.DecimalField(
+            max_digits=9,
+            decimal_places=6,
+            required=False,
+            allow_null=True,
+        )
+        has_electricity_included = serializers.BooleanField(required=False)
+        has_cleaning_service = serializers.BooleanField(required=False)
+        additional_services = serializers.CharField(required=False, allow_blank=True)
+        images = PropertyImageSerializer(many=True, required=False)
+        rooms = PropertyRoomSerializer(many=True, required=False)
 
     properties = PropertyInputSerializer(many=True)
     role = serializers.HiddenField(default=Profile.Roles.OWNER)
@@ -249,7 +459,13 @@ class OwnerRegisterSerializer(RegisterSerializer):
                 _("At least one property must be provided for registration."),
                 code="invalid",
             )
-        return value
+
+        cleaned: list[dict[str, Any]] = []
+        for property_data in value:
+            serializer = PropertySerializer(data=property_data)
+            serializer.is_valid(raise_exception=True)
+            cleaned.append(serializer.validated_data)
+        return cleaned
 
     def create(self, validated_data: Dict[str, Any]) -> Dict[str, Any]:
         properties_data = validated_data.pop("properties", [])
@@ -257,11 +473,7 @@ class OwnerRegisterSerializer(RegisterSerializer):
         with transaction.atomic():
             user, profile = self._create_user_and_profile(validated_data)
             for property_info in properties_data:
-                Property.objects.create(
-                    owner=profile,
-                    name=property_info["name"],
-                    location=property_info["location"],
-                )
+                _create_property_with_nested(profile, property_info)
 
         refresh = RefreshToken.for_user(user)
         return {
@@ -347,11 +559,7 @@ class MeSerializer(serializers.ModelSerializer):
         if not profile or profile.role != Profile.Roles.OWNER:
             return []
         return [
-            {
-                "id": prop.id,
-                "name": prop.name,
-                "location": prop.location,
-            }
+            _serialize_property_summary(prop)
             for prop in profile.properties.all().order_by("name")
         ]
 

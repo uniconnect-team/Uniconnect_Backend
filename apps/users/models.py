@@ -124,14 +124,70 @@ class Property(models.Model):
     )
     name = models.CharField(max_length=255)
     location = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    has_electricity_included = models.BooleanField(default=False)
+    has_cleaning_service = models.BooleanField(default=False)
+    additional_services = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["name"]
-        indexes = [models.Index(fields=["owner", "name"])]
+        indexes = [
+            models.Index(fields=["owner", "name"]),
+            models.Index(fields=["owner", "created_at"]),
+        ]
 
     def __str__(self) -> str:  # pragma: no cover - human readable representation
         return f"Property(name={self.name}, owner={self.owner_id})"
+
+
+class PropertyImage(models.Model):
+    """Images uploaded for a property."""
+
+    property = models.ForeignKey(
+        Property,
+        related_name="images",
+        on_delete=models.CASCADE,
+    )
+    image_url = models.URLField()
+    caption = models.CharField(max_length=255, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable representation
+        return f"PropertyImage(property={self.property_id})"
+
+
+class PropertyRoom(models.Model):
+    """Room availability configuration for a property."""
+
+    class RoomTypes(models.TextChoices):
+        SINGLE = "SINGLE", "Single"
+        DOUBLE = "DOUBLE", "Double"
+
+    property = models.ForeignKey(
+        Property,
+        related_name="rooms",
+        on_delete=models.CASCADE,
+    )
+    room_type = models.CharField(max_length=10, choices=RoomTypes.choices)
+    total_rooms = models.PositiveIntegerField()
+    available_rooms = models.PositiveIntegerField()
+    price_per_month = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["room_type"]
+        unique_together = ("property", "room_type", "notes")
+
+    def __str__(self) -> str:  # pragma: no cover - human readable representation
+        return f"PropertyRoom(property={self.property_id}, room_type={self.room_type})"
 
 
