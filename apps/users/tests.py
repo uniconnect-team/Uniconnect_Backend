@@ -5,11 +5,20 @@ import re
 
 from django.contrib.auth.models import User
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import PendingRegistration, Profile, Property, UniversityDomain
+from .models import (
+    PendingRegistration,
+    Profile,
+    Property,
+    PropertyImage,
+    Room,
+    RoomImage,
+    UniversityDomain,
+)
 
 
 class AuthFlowTests(APITestCase):
@@ -96,7 +105,7 @@ class AuthFlowTests(APITestCase):
         self.assertIsNotNone(profile.email_verified_at)
         self.assertIsNotNone(profile.university_domain)
         self.assertEqual(profile.university_domain.domain, "mail.aub.edu")
-        self.assertEqual(response.data["user"]["default_home_path"], "/seekers/home")
+        self.assertEqual(response.data["user"]["default_home_path"], "/complete-profile/seeker")
 
     def test_register_owner_allows_non_university_email(self) -> None:
         payload = self._owner_register_payload()
@@ -108,7 +117,7 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(user.profile.role, Profile.Roles.OWNER)
         self.assertFalse(user.profile.is_student_verified)
         self.assertEqual(Property.objects.filter(owner=user.profile).count(), 1)
-        self.assertEqual(response.data["user"]["default_home_path"], "/owners/dashboard")
+        self.assertEqual(response.data["user"]["default_home_path"], "/complete-profile/owner")
 
     def test_register_owner_requires_property_information(self) -> None:
         payload = self._owner_register_payload(properties=[])
@@ -166,7 +175,7 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("access", response.data)
         self.assertEqual(response.data["user"]["email"], "owner@gmail.com")
-        self.assertEqual(response.data["user"]["default_home_path"], "/owners/dashboard")
+        self.assertEqual(response.data["user"]["default_home_path"], "/complete-profile/owner")
 
     def test_login_with_phone(self) -> None:
         self.test_register_seeker_creates_user_and_marks_verified()
@@ -177,7 +186,7 @@ class AuthFlowTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["user"]["phone"], "+96171123456")
-        self.assertEqual(response.data["user"]["default_home_path"], "/seekers/home")
+        self.assertEqual(response.data["user"]["default_home_path"], "/complete-profile/seeker")
 
     def test_me_endpoint_returns_profile(self) -> None:
         register_response = self.client.post(
@@ -191,4 +200,162 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["email"], "student@mail.aub.edu")
         self.assertTrue(response.data["is_student_verified"])
-        self.assertEqual(response.data["default_home_path"], "/seekers/home")
+        self.assertEqual(response.data["default_home_path"], "/complete-profile/seeker")
+
+    def _authenticate_owner(self) -> tuple[User, str]:
+        response = self.client.post(
+            reverse("users:register-owner"), self._owner_register_payload(), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        token = response.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        return User.objects.get(email="owner@gmail.com"), token
+
+    def test_owner_can_create_property_with_rooms(self) -> None:
+        owner, _ = self._authenticate_owner()
+        payload = {
+            "name": "Green Villas",
+            "location": "Tripoli",
+            "description": "Near campus",
+            "amenities": ["WiFi", "Laundry"],
+            "electricity_included": True,
+            "cleaning_included": True,
+            "rooms": [
+                {
+                    "name": "Single Deluxe",
+                    "room_type": "SINGLE",
+                    "description": "Cozy room",
+                    "price_per_month": "550.00",
+                    "capacity": 1,
+                    "available_quantity": 3,
+                    "amenities": ["AC", "Desk"],
+                    "electricity_included": True,
+                    "cleaning_included": True,
+                }
+            ],
+        }
+
+        response = self.client.post(
+            reverse("users:owner-properties-list"), payload, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        property_id = response.data["id"]
+        self.assertEqual(response.data["rooms"][0]["name"], "Single Deluxe")
+        self.assertTrue(response.data["electricity_included"])
+        self.assertEqual(Room.objects.filter(property_id=property_id).count(), 1)
+        self.assertEqual(Room.objects.filter(property__owner=owner.profile).count(), 1)
+
+    def test_owner_can_update_property_and_replace_rooms(self) -> None:
+        owner, _ = self._authenticate_owner()
+        create_response = self.client.post(
+            reverse("users:owner-properties-list"),
+            {
+                "name": "Sunrise Dorm",
+                "location": "Byblos",
+                "rooms": [
+                    {
+                        "name": "Initial Room",
+                        "room_type": "DOUBLE",
+                        "price_per_month": "450.00",
+                        "available_quantity": 2,
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        property_id = create_response.data["id"]
+
+        update_payload = {
+            "description": "Updated description",
+            "rooms": [
+                {
+                    "name": "Updated Single",
+                    "room_type": "SINGLE",
+                    "price_per_month": "500.00",
+                    "capacity": 1,
+                    "available_quantity": 5,
+                    "amenities": ["Heating"],
+                },
+                {
+                    "name": "Updated Double",
+                    "room_type": "DOUBLE",
+                    "price_per_month": "650.00",
+                    "capacity": 2,
+                    "available_quantity": 2,
+                },
+            ],
+        }
+
+        response = self.client.patch(
+            reverse("users:owner-properties-detail", args=[property_id]),
+            update_payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["description"], "Updated description")
+        self.assertEqual(len(response.data["rooms"]), 2)
+        self.assertEqual(
+            Room.objects.filter(property__owner=owner.profile, property_id=property_id).count(),
+            2,
+        )
+
+    def test_owner_can_upload_property_and_room_images(self) -> None:
+        owner, _ = self._authenticate_owner()
+        property_response = self.client.post(
+            reverse("users:owner-properties-list"),
+            {
+                "name": "Cedars Loft",
+                "location": "Beirut",
+                "rooms": [
+                    {
+                        "name": "Loft Room",
+                        "room_type": "SINGLE",
+                        "price_per_month": "700.00",
+                        "available_quantity": 1,
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(property_response.status_code, status.HTTP_201_CREATED)
+        property_id = property_response.data["id"]
+        room_id = property_response.data["rooms"][0]["id"]
+
+        dummy_file = SimpleUploadedFile(
+            "cover.jpg", b"fake-image-bytes", content_type="image/jpeg"
+        )
+        image_response = self.client.post(
+            reverse("users:owner-property-images-list"),
+            {"property": property_id, "image": dummy_file, "caption": "Front view"},
+            format="multipart",
+        )
+        self.assertEqual(image_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(PropertyImage.objects.filter(property_id=property_id).count(), 1)
+
+        room_image_file = SimpleUploadedFile(
+            "room.jpg", b"room-image-bytes", content_type="image/jpeg"
+        )
+        room_image_response = self.client.post(
+            reverse("users:owner-room-images-list"),
+            {"room": room_id, "image": room_image_file, "caption": "Room view"},
+            format="multipart",
+        )
+
+        self.assertEqual(room_image_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(RoomImage.objects.filter(room_id=room_id).count(), 1)
+
+    def test_non_owner_cannot_access_property_endpoints(self) -> None:
+        # Register seeker and try to access owner endpoints
+        register_response = self.client.post(
+            reverse("users:register"),
+            self._register_payload(),
+            format="json",
+        )
+        token = register_response.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        response = self.client.get(reverse("users:owner-properties-list"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

@@ -2,8 +2,19 @@
 from __future__ import annotations
 
 from django.urls import path
+from rest_framework.routers import DefaultRouter
 
-from .views import LoginView,CompleteProfileView, MeView, OwnerRegisterView, RegisterView
+from .views import (
+    CompleteProfileView,
+    LoginView,
+    MeView,
+    OwnerPropertyImageViewSet,
+    OwnerPropertyViewSet,
+    OwnerRegisterView,
+    OwnerRoomImageViewSet,
+    OwnerRoomViewSet,
+    RegisterView,
+)
 
 app_name = "users"
 
@@ -14,3 +25,20 @@ urlpatterns = [
     path("me/", MeView.as_view(), name="me"),
     path("complete-profile/", CompleteProfileView.as_view(), name="complete-profile"),
 ]
+
+
+router = DefaultRouter()
+router.register("owner/properties", OwnerPropertyViewSet, basename="owner-properties")
+router.register("owner/rooms", OwnerRoomViewSet, basename="owner-rooms")
+router.register(
+    "owner/property-images",
+    OwnerPropertyImageViewSet,
+    basename="owner-property-images",
+)
+router.register(
+    "owner/room-images",
+    OwnerRoomImageViewSet,
+    basename="owner-room-images",
+)
+
+urlpatterns += router.urls

@@ -14,7 +14,16 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailOTP, PendingRegistration, Profile, Property, UniversityDomain
+from .models import (
+    EmailOTP,
+    PendingRegistration,
+    Profile,
+    Property,
+    PropertyImage,
+    Room,
+    RoomImage,
+    UniversityDomain,
+)
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"
@@ -51,7 +60,7 @@ def _resolve_default_home_path(profile: Profile | None) -> str:
 
     # Profile is complete - go to role-specific home
     if profile.role == Profile.Roles.OWNER:
-        return "/owners/dashboard"
+        return "/owners/properties"
 
     if profile.role == Profile.Roles.SEEKER:
         return "/seekers/home"
@@ -69,6 +78,10 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
                 "id": prop.id,
                 "name": prop.name,
                 "location": prop.location,
+                "cover_image": prop.cover_image.url if prop.cover_image else "",
+                "rooms_count": prop.rooms.count(),
+                "electricity_included": prop.electricity_included,
+                "cleaning_included": prop.cleaning_included,
             }
             for prop in profile.properties.all().order_by("name")
         ]
@@ -88,6 +101,199 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
         "default_home_path": _resolve_default_home_path(profile),
     }
 
+
+class PropertyImageNestedSerializer(serializers.ModelSerializer):
+    """Serializer for property gallery images nested under a property."""
+
+    class Meta:
+        model = PropertyImage
+        fields = ("id", "image", "caption", "uploaded_at")
+        read_only_fields = ("id", "uploaded_at")
+
+
+class RoomImageNestedSerializer(serializers.ModelSerializer):
+    """Serializer for room gallery images nested under a room."""
+
+    class Meta:
+        model = RoomImage
+        fields = ("id", "image", "caption", "uploaded_at")
+        read_only_fields = ("id", "uploaded_at")
+
+
+class RoomNestedSerializer(serializers.ModelSerializer):
+    """Nested room serializer used when working through the property serializer."""
+
+    images = RoomImageNestedSerializer(many=True, required=False)
+
+    class Meta:
+        model = Room
+        fields = (
+            "id",
+            "name",
+            "room_type",
+            "description",
+            "price_per_month",
+            "capacity",
+            "available_quantity",
+            "amenities",
+            "electricity_included",
+            "cleaning_included",
+            "is_active",
+            "images",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate_amenities(self, value: Any) -> list[str]:
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Amenities must be provided as a list of strings.")
+        return value
+
+
+class PropertySerializer(serializers.ModelSerializer):
+    """Serializer for creating and updating owner properties."""
+
+    images = PropertyImageNestedSerializer(many=True, required=False)
+    rooms = RoomNestedSerializer(many=True, required=False)
+
+    class Meta:
+        model = Property
+        fields = (
+            "id",
+            "name",
+            "location",
+            "description",
+            "cover_image",
+            "amenities",
+            "electricity_included",
+            "cleaning_included",
+            "images",
+            "rooms",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate_amenities(self, value: Any) -> list[str]:
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Amenities must be provided as a list of strings.")
+        return value
+
+    def create(self, validated_data: Dict[str, Any]) -> Property:
+        images_data = validated_data.pop("images", [])
+        rooms_data = validated_data.pop("rooms", [])
+        owner = self.context.get("owner")
+        if not owner:
+            raise serializers.ValidationError("Owner context is required to create properties.")
+
+        property_obj = Property.objects.create(owner=owner, **validated_data)
+        self._sync_property_images(property_obj, images_data)
+        self._sync_rooms(property_obj, rooms_data)
+        return property_obj
+
+    def update(self, instance: Property, validated_data: Dict[str, Any]) -> Property:
+        images_data = validated_data.pop("images", None)
+        rooms_data = validated_data.pop("rooms", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if images_data is not None or "images" in self.initial_data:
+            instance.images.all().delete()
+            self._sync_property_images(instance, images_data or [])
+
+        if rooms_data is not None or "rooms" in self.initial_data:
+            instance.rooms.all().delete()
+            self._sync_rooms(instance, rooms_data or [])
+
+        return instance
+
+    def _sync_property_images(self, property_obj: Property, images_data: list[dict[str, Any]]) -> None:
+        for image_data in images_data:
+            PropertyImage.objects.create(property=property_obj, **image_data)
+
+    def _sync_rooms(self, property_obj: Property, rooms_data: list[dict[str, Any]]) -> None:
+        for room_data in rooms_data:
+            images_data = room_data.pop("images", [])
+            room = Room.objects.create(property=property_obj, **room_data)
+            for image_data in images_data:
+                RoomImage.objects.create(room=room, **image_data)
+
+
+class PropertyImageSerializer(serializers.ModelSerializer):
+    """Serializer for standalone property image operations."""
+
+    class Meta:
+        model = PropertyImage
+        fields = ("id", "property", "image", "caption", "uploaded_at")
+        read_only_fields = ("id", "uploaded_at")
+
+    def validate_property(self, value: Property) -> Property:
+        owner = self.context.get("owner")
+        if owner and value.owner != owner:
+            raise serializers.ValidationError("You can only manage images for your own properties.")
+        return value
+
+
+class RoomImageSerializer(serializers.ModelSerializer):
+    """Serializer for standalone room image operations."""
+
+    class Meta:
+        model = RoomImage
+        fields = ("id", "room", "image", "caption", "uploaded_at")
+        read_only_fields = ("id", "uploaded_at")
+
+    def validate_room(self, value: Room) -> Room:
+        owner = self.context.get("owner")
+        if owner and value.property.owner != owner:
+            raise serializers.ValidationError("You can only manage images for your own rooms.")
+        return value
+
+
+class RoomSerializer(serializers.ModelSerializer):
+    """Serializer for owner room management endpoints."""
+
+    images = RoomImageNestedSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Room
+        fields = (
+            "id",
+            "property",
+            "name",
+            "room_type",
+            "description",
+            "price_per_month",
+            "capacity",
+            "available_quantity",
+            "amenities",
+            "electricity_included",
+            "cleaning_included",
+            "is_active",
+            "images",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate_property(self, value: Property) -> Property:
+        owner = self.context.get("owner")
+        if owner and value.owner != owner:
+            raise serializers.ValidationError("You can only manage rooms for your own properties.")
+        return value
+
+    def validate_amenities(self, value: Any) -> list[str]:
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Amenities must be provided as a list of strings.")
+        return value
 
 class RegisterSerializer(serializers.Serializer):
     """Serializer for creating a new user account."""
@@ -232,6 +438,33 @@ class OwnerRegisterSerializer(RegisterSerializer):
     class PropertyInputSerializer(serializers.Serializer):
         name = serializers.CharField(max_length=255)
         location = serializers.CharField(max_length=255)
+        description = serializers.CharField(required=False, allow_blank=True)
+        cover_image = serializers.ImageField(required=False, allow_null=True)
+        amenities = serializers.ListField(
+            child=serializers.CharField(), required=False, allow_empty=True
+        )
+        electricity_included = serializers.BooleanField(required=False, default=False)
+        cleaning_included = serializers.BooleanField(required=False, default=False)
+
+        class RoomInputSerializer(serializers.Serializer):
+            name = serializers.CharField(max_length=255)
+            room_type = serializers.ChoiceField(choices=Room.RoomType.choices)
+            description = serializers.CharField(required=False, allow_blank=True)
+            price_per_month = serializers.DecimalField(max_digits=8, decimal_places=2)
+            capacity = serializers.IntegerField(min_value=1, default=1)
+            available_quantity = serializers.IntegerField(min_value=0, default=0)
+            amenities = serializers.ListField(
+                child=serializers.CharField(), required=False, allow_empty=True
+            )
+            electricity_included = serializers.BooleanField(
+                required=False, default=False
+            )
+            cleaning_included = serializers.BooleanField(required=False, default=False)
+            is_active = serializers.BooleanField(required=False, default=True)
+            images = RoomImageNestedSerializer(many=True, required=False)
+
+        rooms = RoomInputSerializer(many=True, required=False)
+        images = PropertyImageNestedSerializer(many=True, required=False)
 
     properties = PropertyInputSerializer(many=True)
     role = serializers.HiddenField(default=Profile.Roles.OWNER)
@@ -269,11 +502,39 @@ class OwnerRegisterSerializer(RegisterSerializer):
         with transaction.atomic():
             user, profile = self._create_user_and_profile(validated_data)
             for property_info in properties_data:
-                Property.objects.create(
+                rooms_data = property_info.pop("rooms", [])
+                images_data = property_info.pop("images", [])
+                amenities = property_info.pop("amenities", []) or []
+                property_obj = Property.objects.create(
                     owner=profile,
                     name=property_info["name"],
                     location=property_info["location"],
+                    description=property_info.get("description", ""),
+                    cover_image=property_info.get("cover_image"),
+                    amenities=amenities,
+                    electricity_included=property_info.get("electricity_included", False),
+                    cleaning_included=property_info.get("cleaning_included", False),
                 )
+                for image in images_data:
+                    PropertyImage.objects.create(property=property_obj, **image)
+                for room_info in rooms_data:
+                    room_images = room_info.pop("images", [])
+                    amenities = room_info.pop("amenities", []) or []
+                    room = Room.objects.create(
+                        property=property_obj,
+                        name=room_info["name"],
+                        room_type=room_info["room_type"],
+                        description=room_info.get("description", ""),
+                        price_per_month=room_info["price_per_month"],
+                        capacity=room_info.get("capacity", 1),
+                        available_quantity=room_info.get("available_quantity", 0),
+                        amenities=amenities,
+                        electricity_included=room_info.get("electricity_included", False),
+                        cleaning_included=room_info.get("cleaning_included", False),
+                        is_active=room_info.get("is_active", True),
+                    )
+                    for image in room_images:
+                        RoomImage.objects.create(room=room, **image)
 
         refresh = RefreshToken.for_user(user)
         return {

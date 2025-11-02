@@ -33,7 +33,7 @@ class Profile(models.Model):
 
     user = models.OneToOneField(User, related_name="profile", on_delete=models.CASCADE)
     full_name = models.CharField(max_length=200, blank=True)
-    phone = models.CharField(max_length=20, unique=True)
+    phone = models.CharField(max_length=20, unique=True, blank=True, null=True)
     role = models.CharField(max_length=10, choices=Roles.choices)
     is_student_verified = models.BooleanField(default=False)
     email_verified_at = models.DateTimeField(null=True, blank=True)
@@ -126,12 +126,102 @@ class Property(models.Model):
     )
     name = models.CharField(max_length=255)
     location = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    cover_image = models.FileField(
+        upload_to="property_covers/",
+        null=True,
+        blank=True,
+    )
+    amenities = models.JSONField(default=list, blank=True)
+    electricity_included = models.BooleanField(default=False)
+    cleaning_included = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["name"]
-        indexes = [models.Index(fields=["owner", "name"])]
+        indexes = [
+            models.Index(fields=["owner", "name"]),
+            models.Index(fields=["owner", "created_at"]),
+        ]
 
     def __str__(self) -> str:  # pragma: no cover - human readable representation
         return f"Property(name={self.name}, owner={self.owner_id})"
+
+
+class PropertyImage(models.Model):
+    """Additional gallery images for a property."""
+
+    property = models.ForeignKey(
+        Property,
+        related_name="images",
+        on_delete=models.CASCADE,
+    )
+    image = models.FileField(upload_to="property_images/")
+    caption = models.CharField(max_length=255, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+        indexes = [models.Index(fields=["property", "uploaded_at"])]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable representation
+        return f"PropertyImage(property={self.property_id}, id={self.id})"
+
+
+class Room(models.Model):
+    """Room types and availability within a property."""
+
+    class RoomType(models.TextChoices):
+        SINGLE = "SINGLE", "Single"
+        DOUBLE = "DOUBLE", "Double"
+        SUITE = "SUITE", "Suite"
+        OTHER = "OTHER", "Other"
+
+    property = models.ForeignKey(
+        Property,
+        related_name="rooms",
+        on_delete=models.CASCADE,
+    )
+    name = models.CharField(max_length=255)
+    room_type = models.CharField(max_length=10, choices=RoomType.choices)
+    description = models.TextField(blank=True)
+    price_per_month = models.DecimalField(max_digits=8, decimal_places=2)
+    capacity = models.PositiveIntegerField(default=1)
+    available_quantity = models.PositiveIntegerField(default=0)
+    amenities = models.JSONField(default=list, blank=True)
+    electricity_included = models.BooleanField(default=False)
+    cleaning_included = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [
+            models.Index(fields=["property", "name"]),
+            models.Index(fields=["property", "room_type"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable representation
+        return f"Room(name={self.name}, property={self.property_id})"
+
+
+class RoomImage(models.Model):
+    """Gallery images for individual rooms."""
+
+    room = models.ForeignKey(
+        Room,
+        related_name="images",
+        on_delete=models.CASCADE,
+    )
+    image = models.FileField(upload_to="room_images/")
+    caption = models.CharField(max_length=255, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+        indexes = [models.Index(fields=["room", "uploaded_at"])]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable representation
+        return f"RoomImage(room={self.room_id}, id={self.id})"
