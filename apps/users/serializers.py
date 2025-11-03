@@ -320,6 +320,8 @@ class LoginSerializer(serializers.Serializer):
         return {
             "access": str(access_token),
             "refresh": str(refresh),
+            "access_claims": access_token.payload,
+            "refresh_claims": refresh.payload,
             "user": _build_user_payload(user),
         }
 
