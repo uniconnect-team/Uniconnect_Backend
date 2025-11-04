@@ -3,7 +3,16 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import Profile, UniversityDomain
+from .models import (
+    BookingRequest,
+    Dorm,
+    DormImage,
+    DormRoom,
+    DormRoomImage,
+    Profile,
+    Property,
+    UniversityDomain,
+)
 
 
 @admin.register(Profile)
@@ -26,3 +35,72 @@ class UniversityDomainAdmin(admin.ModelAdmin):
     list_display = ("domain", "university_name", "is_active", "created_at")
     list_filter = ("is_active",)
     search_fields = ("domain", "university_name")
+
+
+@admin.register(Property)
+class PropertyAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "owner", "location", "created_at")
+    search_fields = ("name", "location", "owner__user__username")
+    autocomplete_fields = ("owner",)
+
+
+@admin.register(Dorm)
+class DormAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "name",
+        "property",
+        "is_active",
+        "room_service_available",
+        "electricity_included",
+        "created_at",
+    )
+    search_fields = ("name", "property__name")
+    list_filter = ("is_active", "room_service_available", "electricity_included")
+    autocomplete_fields = ("property",)
+
+
+@admin.register(DormRoom)
+class DormRoomAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "name",
+        "dorm",
+        "room_type",
+        "price_per_month",
+        "available_units",
+        "is_available",
+    )
+    list_filter = ("room_type", "is_available")
+    search_fields = ("name", "dorm__name")
+    autocomplete_fields = ("dorm",)
+
+
+@admin.register(DormImage)
+class DormImageAdmin(admin.ModelAdmin):
+    list_display = ("id", "dorm", "caption", "created_at")
+    search_fields = ("dorm__name", "caption")
+    autocomplete_fields = ("dorm",)
+
+
+@admin.register(DormRoomImage)
+class DormRoomImageAdmin(admin.ModelAdmin):
+    list_display = ("id", "room", "caption", "created_at")
+    search_fields = ("room__name", "caption")
+    autocomplete_fields = ("room",)
+
+
+@admin.register(BookingRequest)
+class BookingRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "room",
+        "seeker_name",
+        "status",
+        "move_in_date",
+        "move_out_date",
+        "created_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("seeker_name", "seeker_email", "room__name")
+    autocomplete_fields = ("room",)
