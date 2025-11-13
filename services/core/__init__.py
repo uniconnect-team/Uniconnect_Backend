@@ -1,0 +1,1 @@
+"""Core microservice package."""
