@@ -687,6 +687,7 @@ class SeekerDormRoomSerializer(serializers.ModelSerializer):
     """List dorm rooms in a seeker-friendly shape."""
 
     images = SeekerDormRoomImageSerializer(many=True, read_only=True)
+    description = serializers.SerializerMethodField()
 
     class Meta:
         model = DormRoom
@@ -703,6 +704,11 @@ class SeekerDormRoomSerializer(serializers.ModelSerializer):
             "images",
         )
         read_only_fields = fields
+
+    def get_description(self, obj: DormRoom) -> str:
+        """Return the optional description if the attribute exists."""
+
+        return getattr(obj, "description", "") or ""
 
 
 class SeekerDormImageSerializer(serializers.ModelSerializer):
