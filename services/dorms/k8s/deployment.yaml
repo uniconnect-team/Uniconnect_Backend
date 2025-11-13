@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dorms-service
+  labels:
+    app: dorms-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dorms-service
+  template:
+    metadata:
+      labels:
+        app: dorms-service
+    spec:
+      containers:
+        - name: dorms
+          image: dorms-service:latest
+          imagePullPolicy: Never
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: services.dorms.settings
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health/
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
