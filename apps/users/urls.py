@@ -15,6 +15,8 @@ from .views import (
     OwnerDormViewSet,
     OwnerRegisterView,
     RegisterView,
+    SeekerBookingRequestViewSet,
+    SeekerDormViewSet,
 )
 
 app_name = "users"
@@ -32,6 +34,12 @@ router.register(
     r"owner/booking-requests",
     OwnerBookingRequestViewSet,
     basename="owner-booking-requests",
+)
+router.register(r"seeker/dorms", SeekerDormViewSet, basename="seeker-dorms")
+router.register(
+    r"seeker/booking-requests",
+    SeekerBookingRequestViewSet,
+    basename="seeker-booking-requests",
 )
 
 urlpatterns = [

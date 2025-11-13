@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -672,3 +672,208 @@ class BookingRequestSerializer(serializers.ModelSerializer):
             instance.responded_at = timezone.now()
             instance.save(update_fields=["responded_at", "status", "owner_note", "updated_at"])
         return instance
+
+
+class SeekerDormRoomImageSerializer(serializers.ModelSerializer):
+    """Expose dorm room images for seekers."""
+
+    class Meta:
+        model = DormRoomImage
+        fields = ("id", "image", "caption")
+        read_only_fields = fields
+
+
+class SeekerDormRoomSerializer(serializers.ModelSerializer):
+    """List dorm rooms in a seeker-friendly shape."""
+
+    images = SeekerDormRoomImageSerializer(many=True, read_only=True)
+    description = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DormRoom
+        fields = (
+            "id",
+            "name",
+            "room_type",
+            "capacity",
+            "price_per_month",
+            "total_units",
+            "available_units",
+            "is_available",
+            "description",
+            "images",
+        )
+        read_only_fields = fields
+
+    def get_description(self, obj: DormRoom) -> str:
+        """Return the optional description if the attribute exists."""
+
+        return getattr(obj, "description", "") or ""
+
+
+class SeekerDormImageSerializer(serializers.ModelSerializer):
+    """Expose dorm gallery images for seekers."""
+
+    class Meta:
+        model = DormImage
+        fields = ("id", "image", "caption")
+        read_only_fields = fields
+
+
+class SeekerDormSerializer(serializers.ModelSerializer):
+    """Public representation of a dorm for seekers."""
+
+    rooms = SeekerDormRoomSerializer(many=True, read_only=True)
+    images = SeekerDormImageSerializer(many=True, read_only=True)
+    cover_photo = serializers.SerializerMethodField()
+    property_detail = serializers.SerializerMethodField()
+    has_room_service = serializers.BooleanField(source="room_service_available", read_only=True)
+    has_electricity = serializers.BooleanField(source="electricity_included", read_only=True)
+    has_water = serializers.BooleanField(source="water_included", read_only=True)
+    has_internet = serializers.BooleanField(source="internet_included", read_only=True)
+
+    class Meta:
+        model = Dorm
+        fields = (
+            "id",
+            "name",
+            "description",
+            "cover_photo",
+            "amenities",
+            "has_room_service",
+            "has_electricity",
+            "has_water",
+            "has_internet",
+            "is_active",
+            "property_detail",
+            "rooms",
+            "images",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+    def get_cover_photo(self, obj: Dorm) -> str:
+        request = self.context.get("request")
+        if obj.cover_image:
+            if request is not None:
+                return request.build_absolute_uri(obj.cover_image.url)
+            return obj.cover_image.url
+        return ""
+
+    def get_property_detail(self, obj: Dorm) -> dict[str, Any]:
+        property_obj = obj.property
+        return {
+            "id": property_obj.id,
+            "name": property_obj.name,
+            "location": property_obj.location,
+        }
+
+
+class SeekerBookingRequestSerializer(serializers.ModelSerializer):
+    """Serializer for seeker booking request listings."""
+
+    dorm_summary = serializers.SerializerMethodField()
+    room_summary = serializers.SerializerMethodField()
+    check_in = serializers.DateField(source="move_in_date", allow_null=True, required=False)
+    check_out = serializers.DateField(source="move_out_date", allow_null=True, required=False)
+
+    class Meta:
+        model = BookingRequest
+        fields = (
+            "id",
+            "status",
+            "owner_note",
+            "check_in",
+            "check_out",
+            "created_at",
+            "responded_at",
+            "dorm_summary",
+            "room_summary",
+        )
+        read_only_fields = fields
+
+    def get_dorm_summary(self, obj: BookingRequest) -> Optional[dict[str, Any]]:
+        dorm = getattr(obj.room, "dorm", None)
+        if dorm is None:
+            return None
+        property_obj = dorm.property
+        request = self.context.get("request")
+        cover_photo = ""
+        if dorm.cover_image:
+            if request is not None:
+                cover_photo = request.build_absolute_uri(dorm.cover_image.url)
+            else:
+                cover_photo = dorm.cover_image.url
+        return {
+            "id": dorm.id,
+            "name": dorm.name,
+            "property_name": property_obj.name,
+            "property_location": property_obj.location,
+            "cover_photo": cover_photo,
+        }
+
+    def get_room_summary(self, obj: BookingRequest) -> Optional[dict[str, Any]]:
+        room = getattr(obj, "room", None)
+        if room is None:
+            return None
+        return {
+            "id": room.id,
+            "name": room.name,
+            "room_type": room.room_type,
+        }
+
+
+class SeekerBookingRequestCreateSerializer(serializers.ModelSerializer):
+    """Handle seeker-initiated booking requests."""
+
+    dorm = serializers.PrimaryKeyRelatedField(queryset=Dorm.objects.filter(is_active=True), write_only=True)
+    room = serializers.PrimaryKeyRelatedField(queryset=DormRoom.objects.all())
+    check_in = serializers.DateField(source="move_in_date", required=False, allow_null=True)
+    check_out = serializers.DateField(source="move_out_date", required=False, allow_null=True)
+
+    class Meta:
+        model = BookingRequest
+        fields = (
+            "id",
+            "dorm",
+            "room",
+            "seeker_name",
+            "seeker_email",
+            "seeker_phone",
+            "message",
+            "check_in",
+            "check_out",
+        )
+        read_only_fields = ("id",)
+        extra_kwargs = {
+            "seeker_name": {"required": False, "allow_blank": True},
+            "seeker_email": {"required": False, "allow_blank": True},
+            "seeker_phone": {"required": False, "allow_blank": True},
+            "message": {"required": False, "allow_blank": True},
+        }
+
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        dorm: Dorm = attrs.get("dorm")
+        room: DormRoom = attrs.get("room")
+        check_in = attrs.get("move_in_date")
+        check_out = attrs.get("move_out_date")
+
+        if room and dorm and room.dorm_id != dorm.id:
+            raise serializers.ValidationError({"room": _("Selected room does not belong to this dorm.")})
+
+        if check_in and check_out and check_in > check_out:
+            raise serializers.ValidationError({"check_out": _("Check-out date must be after check-in date.")})
+
+        if room and not room.is_available:
+            raise serializers.ValidationError({"room": _("This room is not currently accepting bookings.")})
+
+        if room and room.available_units is not None and room.available_units <= 0:
+            raise serializers.ValidationError({"room": _("This room is fully booked at the moment.")})
+
+        return attrs
+
+    def create(self, validated_data: Dict[str, Any]) -> BookingRequest:
+        validated_data.pop("dorm", None)
+        validated_data.setdefault("status", BookingRequest.Status.PENDING)
+        return super().create(validated_data)
