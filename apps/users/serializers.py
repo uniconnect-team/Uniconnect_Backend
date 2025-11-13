@@ -14,7 +14,18 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailOTP, PendingRegistration, Profile, Property, UniversityDomain
+from .models import (
+    BookingRequest,
+    Dorm,
+    DormImage,
+    DormRoom,
+    DormRoomImage,
+    EmailOTP,
+    PendingRegistration,
+    Profile,
+    Property,
+    UniversityDomain,
+)
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"
@@ -63,6 +74,7 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
     profile = getattr(user, "profile", None)
     university_domain = getattr(profile, "university_domain", None)
     properties: list[dict[str, Any]] = []
+    dorms: list[dict[str, Any]] = []
     if profile and profile.role == Profile.Roles.OWNER:
         properties = [
             {
@@ -71,6 +83,19 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
                 "location": prop.location,
             }
             for prop in profile.properties.all().order_by("name")
+        ]
+        dorms = [
+            {
+                "id": dorm.id,
+                "name": dorm.name,
+                "property": {
+                    "id": dorm.property_id,
+                    "name": dorm.property.name,
+                },
+                "cover_image": dorm.cover_image.url if dorm.cover_image else "",
+                "is_active": dorm.is_active,
+            }
+            for dorm in Dorm.objects.filter(property__owner=profile).select_related("property")
         ]
     return {
         "id": user.id,
@@ -85,6 +110,7 @@ def _build_user_payload(user: User) -> Dict[str, Any]:
         "date_of_birth": getattr(profile, "date_of_birth", None),
         "profile_completed": getattr(profile, "profile_completed", False),
         "properties": properties,
+        "dorms": dorms,
         "default_home_path": _resolve_default_home_path(profile),
     }
 
@@ -406,6 +432,7 @@ class MeSerializer(serializers.ModelSerializer):
     date_of_birth = serializers.DateField(source="profile.date_of_birth", read_only=True)
     profile_completed = serializers.BooleanField(source="profile.profile_completed", read_only=True)
     properties = serializers.SerializerMethodField()
+    dorms = serializers.SerializerMethodField()
     default_home_path = serializers.SerializerMethodField()
 
     class Meta:
@@ -423,6 +450,7 @@ class MeSerializer(serializers.ModelSerializer):
             "date_of_birth",
             "profile_completed",
             "properties",
+            "dorms",
             "default_home_path",
         )
 
@@ -439,6 +467,208 @@ class MeSerializer(serializers.ModelSerializer):
             for prop in profile.properties.all().order_by("name")
         ]
 
+    def get_dorms(self, obj: User) -> list[dict[str, Any]]:
+        profile = getattr(obj, "profile", None)
+        if not profile or profile.role != Profile.Roles.OWNER:
+            return []
+        dorms = (
+            Dorm.objects.filter(property__owner=profile)
+            .select_related("property")
+            .order_by("name")
+        )
+        return [
+            {
+                "id": dorm.id,
+                "name": dorm.name,
+                "property": {
+                    "id": dorm.property_id,
+                    "name": dorm.property.name,
+                },
+                "cover_image": dorm.cover_image.url if dorm.cover_image else "",
+                "is_active": dorm.is_active,
+            }
+            for dorm in dorms
+        ]
+
     def get_default_home_path(self, obj: User) -> str:
         profile = getattr(obj, "profile", None)
         return _resolve_default_home_path(profile)
+
+
+class DormImageSerializer(serializers.ModelSerializer):
+    """Serializer for dorm gallery images."""
+
+    class Meta:
+        model = DormImage
+        fields = ("id", "dorm", "image", "caption", "created_at")
+        read_only_fields = ("id", "created_at")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request.user, "profile"):
+            profile = request.user.profile
+            self.fields["dorm"].queryset = Dorm.objects.filter(property__owner=profile)
+        else:
+            self.fields["dorm"].queryset = Dorm.objects.none()
+
+
+class DormRoomImageSerializer(serializers.ModelSerializer):
+    """Serializer for dorm room gallery images."""
+
+    class Meta:
+        model = DormRoomImage
+        fields = ("id", "room", "image", "caption", "created_at")
+        read_only_fields = ("id", "created_at")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request.user, "profile"):
+            profile = request.user.profile
+            self.fields["room"].queryset = DormRoom.objects.filter(dorm__property__owner=profile)
+        else:
+            self.fields["room"].queryset = DormRoom.objects.none()
+
+
+class DormRoomSerializer(serializers.ModelSerializer):
+    """Serializer for dorm room management."""
+
+    images = DormRoomImageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DormRoom
+        fields = (
+            "id",
+            "dorm",
+            "name",
+            "room_type",
+            "capacity",
+            "price_per_month",
+            "amenities",
+            "total_units",
+            "available_units",
+            "is_available",
+            "images",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request.user, "profile"):
+            profile = request.user.profile
+            self.fields["dorm"].queryset = Dorm.objects.filter(property__owner=profile)
+        else:
+            self.fields["dorm"].queryset = Dorm.objects.none()
+
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        total_units = attrs.get("total_units", getattr(self.instance, "total_units", 1))
+        available_units = attrs.get(
+            "available_units",
+            getattr(self.instance, "available_units", total_units),
+        )
+        if available_units > total_units:
+            raise serializers.ValidationError(
+                {"available_units": _("Available units cannot exceed total units.")}
+            )
+        return attrs
+
+
+class DormSerializer(serializers.ModelSerializer):
+    """Serializer for dorm management including nested resources."""
+
+    rooms = DormRoomSerializer(many=True, read_only=True)
+    images = DormImageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Dorm
+        fields = (
+            "id",
+            "property",
+            "name",
+            "description",
+            "cover_image",
+            "amenities",
+            "room_service_available",
+            "electricity_included",
+            "water_included",
+            "internet_included",
+            "is_active",
+            "rooms",
+            "images",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request.user, "profile"):
+            profile = request.user.profile
+            self.fields["property"].queryset = Property.objects.filter(owner=profile)
+        else:
+            self.fields["property"].queryset = Property.objects.none()
+
+
+class BookingRequestSerializer(serializers.ModelSerializer):
+    """Serializer used for owner booking request management."""
+
+    dorm = serializers.SerializerMethodField()
+    room = serializers.PrimaryKeyRelatedField(queryset=DormRoom.objects.none())
+
+    class Meta:
+        model = BookingRequest
+        fields = (
+            "id",
+            "room",
+            "dorm",
+            "seeker_name",
+            "seeker_email",
+            "seeker_phone",
+            "message",
+            "move_in_date",
+            "move_out_date",
+            "status",
+            "owner_note",
+            "responded_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "responded_at", "created_at", "updated_at", "dorm")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request.user, "profile"):
+            profile = request.user.profile
+            self.fields["room"].queryset = DormRoom.objects.filter(dorm__property__owner=profile)
+        else:
+            self.fields["room"].queryset = DormRoom.objects.none()
+
+    def get_dorm(self, obj: BookingRequest) -> dict[str, Any]:
+        dorm = obj.room.dorm
+        return {
+            "id": dorm.id,
+            "name": dorm.name,
+            "property": {
+                "id": dorm.property_id,
+                "name": dorm.property.name,
+            },
+        }
+
+    def validate_room(self, value: DormRoom) -> DormRoom:
+        if self.instance and value != self.instance.room:
+            raise serializers.ValidationError(_("Room cannot be changed once created."))
+        return value
+
+    def update(self, instance: BookingRequest, validated_data: Dict[str, Any]) -> BookingRequest:
+        previous_status = instance.status
+        instance = super().update(instance, validated_data)
+        if previous_status != instance.status and instance.status != BookingRequest.Status.PENDING:
+            instance.responded_at = timezone.now()
+            instance.save(update_fields=["responded_at", "status", "owner_note", "updated_at"])
+        return instance
