@@ -4,14 +4,17 @@ from __future__ import annotations
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import generics, mixins, status, viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import BookingRequest, Dorm, DormRoom, Profile
+from .models import BookingRequest, Dorm, DormImage, DormRoom, DormRoomImage, Profile
 from .serializers import (
     BookingRequestSerializer,
+    DormImageSerializer,
     DormRoomSerializer,
+    DormRoomImageSerializer,
     DormSerializer,
     LoginSerializer,
     MeSerializer,
@@ -160,6 +163,38 @@ class OwnerDormViewSet(viewsets.ModelViewSet):
         return context
 
 
+class DormImageViewSet(viewsets.ModelViewSet):
+    """Manage dorm gallery images for an owner's dorms."""
+
+    serializer_class = DormImageSerializer
+    permission_classes = [IsAuthenticated, IsOwnerProfile]
+
+    def get_queryset(self):
+        profile = self.request.user.profile
+        queryset = DormImage.objects.filter(dorm__property__owner=profile).select_related("dorm")
+        dorm_id = self.request.query_params.get("dorm")
+        if dorm_id:
+            queryset = queryset.filter(dorm_id=dorm_id)
+        return queryset
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+
+    def perform_create(self, serializer):
+        dorm = serializer.validated_data.get("dorm")
+        if dorm.property.owner != self.request.user.profile:
+            raise PermissionDenied("You do not have permission to manage images for this dorm.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        dorm = serializer.validated_data.get("dorm", serializer.instance.dorm)
+        if dorm.property.owner != self.request.user.profile:
+            raise PermissionDenied("You do not have permission to manage images for this dorm.")
+        serializer.save()
+
+
 class OwnerDormRoomViewSet(viewsets.ModelViewSet):
     """Manage dorm rooms for an owner's dorms."""
 
@@ -178,6 +213,45 @@ class OwnerDormRoomViewSet(viewsets.ModelViewSet):
         context = super().get_serializer_context()
         context["request"] = self.request
         return context
+
+
+class DormRoomImageViewSet(viewsets.ModelViewSet):
+    """Manage dorm room gallery images for an owner's dorm rooms."""
+
+    serializer_class = DormRoomImageSerializer
+    permission_classes = [IsAuthenticated, IsOwnerProfile]
+
+    def get_queryset(self):
+        profile = self.request.user.profile
+        queryset = (
+            DormRoomImage.objects.filter(room__dorm__property__owner=profile)
+            .select_related("room", "room__dorm")
+        )
+        room_id = self.request.query_params.get("room")
+        if room_id:
+            queryset = queryset.filter(room_id=room_id)
+        return queryset
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+
+    def perform_create(self, serializer):
+        room = serializer.validated_data.get("room")
+        if room.dorm.property.owner != self.request.user.profile:
+            raise PermissionDenied(
+                "You do not have permission to manage images for this dorm room."
+            )
+        serializer.save()
+
+    def perform_update(self, serializer):
+        room = serializer.validated_data.get("room", serializer.instance.room)
+        if room.dorm.property.owner != self.request.user.profile:
+            raise PermissionDenied(
+                "You do not have permission to manage images for this dorm room."
+            )
+        serializer.save()
 
 
 class OwnerBookingRequestViewSet(
