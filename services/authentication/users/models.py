@@ -8,6 +8,8 @@ from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
+from services.media import models as media_models
+
 
 class UniversityDomain(models.Model):
     """Allow-listed university email domains."""
@@ -138,25 +140,9 @@ class Property(models.Model):
         return f"Property(name={self.name}, owner={self.owner_id})"
 
 
-def _dorm_cover_upload_path(instance: "Dorm", filename: str) -> str:
-    """Return a deterministic upload path for dorm cover images."""
-
-    owner_id = instance.property.owner_id if instance.property_id else "unassigned"
-    return f"dorms/{owner_id}/covers/{filename}"
-
-
-def _dorm_gallery_upload_path(instance: "DormImage", filename: str) -> str:
-    """Return upload path for dorm gallery images."""
-
-    owner_id = instance.dorm.property.owner_id if instance.dorm.property_id else "unassigned"
-    return f"dorms/{owner_id}/gallery/{filename}"
-
-
-def _room_gallery_upload_path(instance: "DormRoomImage", filename: str) -> str:
-    """Return upload path for room gallery images."""
-
-    owner_id = instance.room.dorm.property.owner_id if instance.room.dorm.property_id else "unassigned"
-    return f"dorms/{owner_id}/rooms/{instance.room_id or 'unassigned'}/{filename}"
+_dorm_cover_upload_path = media_models._dorm_cover_upload_path
+_dorm_gallery_upload_path = media_models._dorm_gallery_upload_path
+_room_gallery_upload_path = media_models._room_gallery_upload_path
 
 
 class Dorm(models.Model):
@@ -189,23 +175,7 @@ class Dorm(models.Model):
         return f"Dorm(name={self.name}, property={self.property_id})"
 
 
-class DormImage(models.Model):
-    """Gallery images for a dorm."""
-
-    dorm = models.ForeignKey(
-        Dorm,
-        related_name="images",
-        on_delete=models.CASCADE,
-    )
-    image = models.ImageField(upload_to=_dorm_gallery_upload_path)
-    caption = models.CharField(max_length=255, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"DormImage(dorm={self.dorm_id}, id={self.id})"
+DormImage = media_models.DormImage
 
 
 class DormRoom(models.Model):
@@ -243,23 +213,7 @@ class DormRoom(models.Model):
         return f"DormRoom(name={self.name}, dorm={self.dorm_id})"
 
 
-class DormRoomImage(models.Model):
-    """Gallery images for specific dorm rooms."""
-
-    room = models.ForeignKey(
-        DormRoom,
-        related_name="images",
-        on_delete=models.CASCADE,
-    )
-    image = models.ImageField(upload_to=_room_gallery_upload_path)
-    caption = models.CharField(max_length=255, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"DormRoomImage(room={self.room_id}, id={self.id})"
+DormRoomImage = media_models.DormRoomImage
 
 
 class BookingRequest(models.Model):

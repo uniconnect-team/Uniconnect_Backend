@@ -9,8 +9,6 @@ from .views import (
     LoginView,
     MeView,
     OwnerBookingRequestViewSet,
-    OwnerDormImageViewSet,
-    OwnerDormRoomImageViewSet,
     OwnerDormRoomViewSet,
     OwnerDormViewSet,
     OwnerRegisterView,
@@ -24,12 +22,6 @@ app_name = "users"
 router = DefaultRouter()
 router.register(r"owner/dorms", OwnerDormViewSet, basename="owner-dorms")
 router.register(r"owner/dorm-rooms", OwnerDormRoomViewSet, basename="owner-dorm-rooms")
-router.register(r"owner/dorm-images", OwnerDormImageViewSet, basename="owner-dorm-images")
-router.register(
-    r"owner/dorm-room-images",
-    OwnerDormRoomImageViewSet,
-    basename="owner-dorm-room-images",
-)
 router.register(
     r"owner/booking-requests",
     OwnerBookingRequestViewSet,
