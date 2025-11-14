@@ -1,41 +1,26 @@
 """URL configuration for the media service."""
 from __future__ import annotations
 
-from django.conf import settings
-from django.conf.urls.static import static
-from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from services.authentication.users.views import (
-    OwnerDormImageViewSet,
-    OwnerDormRoomImageViewSet,
-)
+from .views import OwnerDormImageViewSet, OwnerDormRoomImageViewSet
 
 
 def health_check(_request):
     return JsonResponse({"status": "ok"})
 
 
-media_router = DefaultRouter()
-media_router.register(
-    r"owner/dorm-images",
-    OwnerDormImageViewSet,
-    basename="owner-dorm-images",
-)
-media_router.register(
-    r"owner/dorm-room-images",
+router = DefaultRouter()
+router.register("owner/dorm-images", OwnerDormImageViewSet, basename="owner-dorm-images")
+router.register(
+    "owner/dorm-room-images",
     OwnerDormRoomImageViewSet,
     basename="owner-dorm-room-images",
 )
 
-
 urlpatterns = [
-    path("admin/", admin.site.urls),
-    path("health/", health_check, name="health"),
-    path("media/", include((media_router.urls, "media"), namespace="media")),
+    path("health/", health_check),
+    path("media/", include(router.urls)),
 ]
-
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

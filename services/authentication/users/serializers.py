@@ -14,6 +14,8 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from services.media.serializers import DormImageSerializer, DormRoomImageSerializer
+
 from .models import (
     BookingRequest,
     Dorm,
@@ -493,42 +495,6 @@ class MeSerializer(serializers.ModelSerializer):
     def get_default_home_path(self, obj: User) -> str:
         profile = getattr(obj, "profile", None)
         return _resolve_default_home_path(profile)
-
-
-class DormImageSerializer(serializers.ModelSerializer):
-    """Serializer for dorm gallery images."""
-
-    class Meta:
-        model = DormImage
-        fields = ("id", "dorm", "image", "caption", "created_at")
-        read_only_fields = ("id", "created_at")
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        request = self.context.get("request")
-        if request and hasattr(request.user, "profile"):
-            profile = request.user.profile
-            self.fields["dorm"].queryset = Dorm.objects.filter(property__owner=profile)
-        else:
-            self.fields["dorm"].queryset = Dorm.objects.none()
-
-
-class DormRoomImageSerializer(serializers.ModelSerializer):
-    """Serializer for dorm room gallery images."""
-
-    class Meta:
-        model = DormRoomImage
-        fields = ("id", "room", "image", "caption", "created_at")
-        read_only_fields = ("id", "created_at")
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        request = self.context.get("request")
-        if request and hasattr(request.user, "profile"):
-            profile = request.user.profile
-            self.fields["room"].queryset = DormRoom.objects.filter(dorm__property__owner=profile)
-        else:
-            self.fields["room"].queryset = DormRoom.objects.none()
 
 
 class DormRoomSerializer(serializers.ModelSerializer):

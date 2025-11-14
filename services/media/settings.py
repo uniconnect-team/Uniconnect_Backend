@@ -15,6 +15,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "services.media",
     "services.authentication.users",
 ]
 
@@ -22,7 +23,7 @@ ROOT_URLCONF = "services.media.urls"
 WSGI_APPLICATION = "services.media.wsgi.application"
 ASGI_APPLICATION = "services.media.asgi.application"
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+BASE_DIR = Path(__file__).resolve().parent
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "mediafiles"

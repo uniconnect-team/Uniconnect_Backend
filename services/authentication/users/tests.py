@@ -2,14 +2,25 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIRequestFactory, APITestCase
 
-from .models import PendingRegistration, Profile, Property, UniversityDomain
+from apps.users.models import (
+    Dorm,
+    DormImage,
+    PendingRegistration,
+    Profile,
+    Property,
+    UniversityDomain,
+)
+from services.media.serializers import DormImageSerializer
 
 
 class AuthFlowTests(APITestCase):
@@ -179,6 +190,7 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.data["user"]["phone"], "+96171123456")
         self.assertEqual(response.data["user"]["default_home_path"], "/seekers/home")
 
+
     def test_me_endpoint_returns_profile(self) -> None:
         register_response = self.client.post(
             reverse("users:register"),
@@ -192,3 +204,54 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.data["email"], "student@mail.aub.edu")
         self.assertTrue(response.data["is_student_verified"])
         self.assertEqual(response.data["default_home_path"], "/seekers/home")
+
+
+class MediaURLTests(APITestCase):
+    """Validate media-related serialization behaviour."""
+
+    def test_media_root_points_to_media_service_directory(self) -> None:
+        expected_root = Path(settings.BASE_DIR) / "services" / "media" / "mediafiles"
+        self.assertEqual(Path(settings.MEDIA_ROOT), expected_root)
+
+    def test_dorm_image_serializer_returns_absolute_url(self) -> None:
+        owner = User.objects.create_user(
+            username="owner1",
+            email="owner1@example.com",
+            password="testpass123",
+        )
+        profile = Profile.objects.create(
+            user=owner,
+            full_name="Owner One",
+            phone="+96171110001",
+            role=Profile.Roles.OWNER,
+        )
+        property_obj = Property.objects.create(
+            owner=profile,
+            name="Cedar Homes",
+            location="Beirut",
+        )
+        dorm = Dorm.objects.create(
+            property=property_obj,
+            name="Cedar Dorm",
+            description="",
+        )
+        image_content = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\n"
+            b"IDATx\xdac\xf8\x0f\x00\x01\x01\x01\x00\x18\xdd\x8d\xb1\x00\x00\x00\x00"
+            b"IEND\xaeB`\x82"
+        )
+        uploaded_file = SimpleUploadedFile(
+            "dorm.png",
+            image_content,
+            content_type="image/png",
+        )
+        dorm_image = DormImage.objects.create(dorm=dorm, image=uploaded_file)
+
+        request = APIRequestFactory().get("/api/users/owner/dorm-images/")
+        request.user = owner
+
+        serializer = DormImageSerializer(dorm_image, context={"request": request})
+        image_url = serializer.data["image"]
+
+        self.assertTrue(image_url.startswith("http://testserver/media/"))
