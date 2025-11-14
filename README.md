@@ -20,6 +20,40 @@ All services share the same `apps` code and database models. The media directory
 
 From the repository root you can build each image. Example commands:
 
+### Windows PowerShell
+
+PowerShell does not support the `VAR=value command` syntax that shells like Bash use. Set the
+`DOCKER_BUILDKIT` environment variable with `$Env:` before running each build:
+
+```powershell
+# Authentication service
+$Env:DOCKER_BUILDKIT = "1"
+docker build -f services/auth_service/Dockerfile -t auth-service:v1 .
+
+# Profile service
+$Env:DOCKER_BUILDKIT = "1"
+docker build -f services/profile_service/Dockerfile -t profile-service:v1 .
+
+# Dorm management service
+$Env:DOCKER_BUILDKIT = "1"
+docker build -f services/dorm_service/Dockerfile -t dorm-service:v1 .
+
+# Booking service
+$Env:DOCKER_BUILDKIT = "1"
+docker build -f services/booking_service/Dockerfile -t booking-service:v1 .
+
+# Notification service
+$Env:DOCKER_BUILDKIT = "1"
+docker build -f services/notification_service/Dockerfile -t notification-service:v1 .
+```
+
+If you prefer to avoid persisting the variable for the entire session, remove it afterwards with
+`Remove-Item Env:DOCKER_BUILDKIT`.
+
+### macOS / Linux (Bash, Zsh, etc.)
+
+On Unix-like shells you can continue using the inline assignment form:
+
 ```bash
 # Authentication service
 DOCKER_BUILDKIT=1 docker build -f services/auth_service/Dockerfile -t auth-service:v1 .
