@@ -8,6 +8,7 @@ from .views import (
     CompleteProfileView,
     LoginView,
     MeView,
+    NotificationListView,
     OwnerBookingRequestViewSet,
     OwnerDormImageViewSet,
     OwnerDormRoomImageViewSet,
@@ -48,5 +49,6 @@ urlpatterns = [
     path("login/", LoginView.as_view(), name="login"),
     path("me/", MeView.as_view(), name="me"),
     path("complete-profile/", CompleteProfileView.as_view(), name="complete-profile"),
+    path("notifications/", NotificationListView.as_view(), name="notifications"),
     path("", include(router.urls)),
 ]

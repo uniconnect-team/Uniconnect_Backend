@@ -375,3 +375,76 @@ class SeekerBookingRequestViewSet(
             "seeker_phone": serializer.validated_data.get("seeker_phone") or getattr(profile, "phone", ""),
         }
         serializer.save(**defaults)
+
+
+class NotificationListView(APIView):
+    """Return lightweight notifications for the authenticated user."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        profile = getattr(user, "profile", None)
+        notifications: list[dict[str, object]] = []
+
+        if profile and profile.role == Profile.Roles.OWNER:
+            pending_requests = (
+                BookingRequest.objects.filter(room__dorm__property__owner=profile)
+                .select_related("room", "room__dorm")
+                .order_by("-created_at")[:20]
+            )
+            for booking in pending_requests:
+                if booking.status == BookingRequest.Status.PENDING:
+                    notifications.append(
+                        {
+                            "id": booking.id,
+                            "type": "BOOKING_PENDING",
+                            "message": (
+                                f"New booking request for {booking.room.name} in "
+                                f"{booking.room.dorm.name}."
+                            ),
+                            "status": booking.status,
+                            "created_at": booking.created_at.isoformat(),
+                        }
+                    )
+                else:
+                    notifications.append(
+                        {
+                            "id": booking.id,
+                            "type": "BOOKING_UPDATE",
+                            "message": (
+                                f"Booking request for {booking.room.name} in "
+                                f"{booking.room.dorm.name} is {booking.status}."
+                            ),
+                            "status": booking.status,
+                            "created_at": booking.updated_at.isoformat(),
+                        }
+                    )
+        elif profile and profile.role == Profile.Roles.SEEKER:
+            filters = Q(seeker_email=user.email)
+            if profile.phone:
+                filters |= Q(seeker_phone=profile.phone)
+
+            seeker_requests = (
+                BookingRequest.objects.filter(filters)
+                .select_related("room", "room__dorm")
+                .order_by("-updated_at")[:20]
+            )
+            for booking in seeker_requests:
+                notifications.append(
+                    {
+                        "id": booking.id,
+                        "type": "BOOKING_STATUS",
+                        "message": (
+                            f"Your booking for {booking.room.name} in {booking.room.dorm.name} "
+                            f"is {booking.status}."
+                        ),
+                        "status": booking.status,
+                        "created_at": booking.updated_at.isoformat(),
+                    }
+                )
+
+        return Response({
+            "count": len(notifications),
+            "results": notifications,
+        })
