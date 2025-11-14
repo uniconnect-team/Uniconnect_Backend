@@ -14,7 +14,11 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from services.media.serializers import DormImageSerializer, DormRoomImageSerializer
+from services.media.serializers import (
+    AbsoluteURLImageField,
+    DormImageSerializer,
+    DormRoomImageSerializer,
+)
 
 from .models import (
     BookingRequest,
@@ -643,6 +647,8 @@ class BookingRequestSerializer(serializers.ModelSerializer):
 class SeekerDormRoomImageSerializer(serializers.ModelSerializer):
     """Expose dorm room images for seekers."""
 
+    image = AbsoluteURLImageField(read_only=True)
+
     class Meta:
         model = DormRoomImage
         fields = ("id", "image", "caption")
@@ -679,6 +685,8 @@ class SeekerDormRoomSerializer(serializers.ModelSerializer):
 
 class SeekerDormImageSerializer(serializers.ModelSerializer):
     """Expose dorm gallery images for seekers."""
+
+    image = AbsoluteURLImageField(read_only=True)
 
     class Meta:
         model = DormImage
