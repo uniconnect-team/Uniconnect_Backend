@@ -14,12 +14,6 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from services.media.serializers import (
-    AbsoluteURLImageField,
-    DormImageSerializer,
-    DormRoomImageSerializer,
-)
-
 from .models import (
     BookingRequest,
     Dorm,
@@ -32,6 +26,37 @@ from .models import (
     Property,
     UniversityDomain,
 )
+
+
+class AbsoluteURLImageField(serializers.ImageField):
+    """Return absolute URLs for stored images when possible."""
+
+    def to_representation(self, value):  # type: ignore[override]
+        url = super().to_representation(value)
+        request = self.context.get("request")
+        if url and request is not None:
+            return request.build_absolute_uri(url)
+        return url
+
+
+class DormImageSerializer(serializers.ModelSerializer):
+    """Serializer for dorm gallery images."""
+
+    image = AbsoluteURLImageField()
+
+    class Meta:
+        model = DormImage
+        fields = "__all__"
+
+
+class DormRoomImageSerializer(serializers.ModelSerializer):
+    """Serializer for dorm room gallery images."""
+
+    image = AbsoluteURLImageField()
+
+    class Meta:
+        model = DormRoomImage
+        fields = "__all__"
 
 
 UNIVERSITY_EMAIL_ERROR_CODE = "UNIVERSITY_EMAIL_REQUIRED"

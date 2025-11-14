@@ -20,7 +20,7 @@ from apps.users.models import (
     Property,
     UniversityDomain,
 )
-from services.media.serializers import DormImageSerializer
+from apps.users.serializers import DormImageSerializer
 
 
 class AuthFlowTests(APITestCase):
@@ -107,7 +107,10 @@ class AuthFlowTests(APITestCase):
         self.assertIsNotNone(profile.email_verified_at)
         self.assertIsNotNone(profile.university_domain)
         self.assertEqual(profile.university_domain.domain, "mail.aub.edu")
-        self.assertEqual(response.data["user"]["default_home_path"], "/seekers/home")
+        self.assertEqual(
+            response.data["user"]["default_home_path"],
+            "/complete-profile/seeker",
+        )
 
     def test_register_owner_allows_non_university_email(self) -> None:
         payload = self._owner_register_payload()
@@ -119,7 +122,10 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(user.profile.role, Profile.Roles.OWNER)
         self.assertFalse(user.profile.is_student_verified)
         self.assertEqual(Property.objects.filter(owner=user.profile).count(), 1)
-        self.assertEqual(response.data["user"]["default_home_path"], "/owners/dashboard")
+        self.assertEqual(
+            response.data["user"]["default_home_path"],
+            "/complete-profile/owner",
+        )
 
     def test_register_owner_requires_property_information(self) -> None:
         payload = self._owner_register_payload(properties=[])
@@ -177,7 +183,10 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("access", response.data)
         self.assertEqual(response.data["user"]["email"], "owner@gmail.com")
-        self.assertEqual(response.data["user"]["default_home_path"], "/owners/dashboard")
+        self.assertEqual(
+            response.data["user"]["default_home_path"],
+            "/complete-profile/owner",
+        )
 
     def test_login_with_phone(self) -> None:
         self.test_register_seeker_creates_user_and_marks_verified()
@@ -188,7 +197,10 @@ class AuthFlowTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["user"]["phone"], "+96171123456")
-        self.assertEqual(response.data["user"]["default_home_path"], "/seekers/home")
+        self.assertEqual(
+            response.data["user"]["default_home_path"],
+            "/complete-profile/seeker",
+        )
 
 
     def test_me_endpoint_returns_profile(self) -> None:
@@ -203,14 +215,17 @@ class AuthFlowTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["email"], "student@mail.aub.edu")
         self.assertTrue(response.data["is_student_verified"])
-        self.assertEqual(response.data["default_home_path"], "/seekers/home")
+        self.assertEqual(
+            response.data["default_home_path"],
+            "/complete-profile/seeker",
+        )
 
 
 class MediaURLTests(APITestCase):
     """Validate media-related serialization behaviour."""
 
     def test_media_root_points_to_media_service_directory(self) -> None:
-        expected_root = Path(settings.BASE_DIR) / "services" / "media" / "mediafiles"
+        expected_root = Path(settings.BASE_DIR) / "mediafiles"
         self.assertEqual(Path(settings.MEDIA_ROOT), expected_root)
 
     def test_dorm_image_serializer_returns_absolute_url(self) -> None:
