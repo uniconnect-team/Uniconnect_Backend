@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: auth-service:v1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: uniconnect.settings_auth
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: media-storage
+              mountPath: /app/media
+      volumes:
+        - name: media-storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP
