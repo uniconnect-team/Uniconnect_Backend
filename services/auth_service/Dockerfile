@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENV DJANGO_SETTINGS_MODULE=uniconnect.settings_auth
 

@@ -14,19 +14,27 @@ spec:
     spec:
       containers:
         - name: profile-service
-          image: profile-service:v1
-          imagePullPolicy: IfNotPresent
+          image: profile-service:latest
+          imagePullPolicy: Never
           env:
             - name: DJANGO_SETTINGS_MODULE
               value: uniconnect.settings_profile
+            - name: DATABASE_PATH
+              value: /shared-data/db.sqlite3
+            
           ports:
             - containerPort: 8000
           volumeMounts:
             - name: media-storage
               mountPath: /app/media
+            - name: shared-db
+              mountPath: /shared-data
       volumes:
         - name: media-storage
           emptyDir: {}
+        - name: shared-db
+          persistentVolumeClaim:
+            claimName: uniconnect-db-pvc
 ---
 apiVersion: v1
 kind: Service
