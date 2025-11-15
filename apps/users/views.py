@@ -8,7 +8,7 @@ from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import BookingRequest, Dorm, DormImage, DormRoom, DormRoomImage, Profile
+from .models import BookingRequest, Dorm, DormImage, DormRoom, DormRoomImage, Profile, CarpoolRide
 from .serializers import (
     BookingRequestSerializer,
     DormImageSerializer,
@@ -25,6 +25,7 @@ from .serializers import (
     SeekerDormSerializer,
     SeekerProfileCompletionSerializer,
     _build_user_payload,
+    CarpoolRideSerializer,
 )
 
 
@@ -271,6 +272,15 @@ class OwnerBookingRequestViewSet(
             instance.responded_at = timezone.now()
             instance.save(update_fields=["responded_at", "updated_at"])
 
+class CarpoolRideViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CarpoolRideSerializer
+
+    def get_queryset(self):
+        return CarpoolRide.objects.all().select_related("driver__user")
+
+    def perform_create(self, serializer):
+        serializer.save(driver=self.request.user.profile)
 
 class SeekerDormViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     """Allow seekers to browse published dorms."""

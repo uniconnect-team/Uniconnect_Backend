@@ -18,6 +18,7 @@ from .views import (
     RegisterView,
     SeekerBookingRequestViewSet,
     SeekerDormViewSet,
+    CarpoolRideViewSet,
 )
 
 app_name = "users"
@@ -42,6 +43,8 @@ router.register(
     SeekerBookingRequestViewSet,
     basename="seeker-booking-requests",
 )
+router.register(r"carpool-rides", CarpoolRideViewSet, basename="carpool-rides")
+
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),

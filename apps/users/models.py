@@ -242,6 +242,18 @@ class DormRoom(models.Model):
     def __str__(self) -> str:  # pragma: no cover
         return f"DormRoom(name={self.name}, dorm={self.dorm_id})"
 
+class CarpoolRide(models.Model):
+    driver = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="carpool_rides")
+    origin = models.CharField(max_length=255)
+    destination = models.CharField(max_length=255)
+    date = models.DateField()
+    time = models.TimeField()
+    seats_available = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.origin} → {self.destination} by {self.driver.full_name}"
+
 
 class DormRoomImage(models.Model):
     """Gallery images for specific dorm rooms."""

@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: carpooling-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: carpooling-service
+  template:
+    metadata:
+      labels:
+        app: carpooling-service
+    spec:
+      containers:
+        - name: carpooling-service
+          image: carpooling-service:latest
+          imagePullPolicy: Never
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: uniconnect.settings_carpooling
+            - name: DATABASE_PATH
+              value: /shared-data/db.sqlite3
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: media-storage
+              mountPath: /app/media
+            - name: shared-db
+              mountPath: /shared-data
+      volumes:
+        - name: media-storage
+          emptyDir: {}
+        - name: shared-db
+          persistentVolumeClaim:
+            claimName: uniconnect-db-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: carpooling-service
+spec:
+  selector:
+    app: carpooling-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP

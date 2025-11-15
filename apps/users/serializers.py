@@ -25,6 +25,7 @@ from .models import (
     Profile,
     Property,
     UniversityDomain,
+    CarpoolRide,
 )
 
 
@@ -673,6 +674,23 @@ class BookingRequestSerializer(serializers.ModelSerializer):
             instance.save(update_fields=["responded_at", "status", "owner_note", "updated_at"])
         return instance
 
+class CarpoolRideSerializer(serializers.ModelSerializer):
+    driver_name = serializers.CharField(source="driver.full_name", read_only=True)
+
+    class Meta:
+        model = CarpoolRide
+        fields = [
+            "id",
+            "driver",
+            "driver_name",
+            "origin",
+            "destination",
+            "date",
+            "time",
+            "seats_available",
+            "created_at",
+        ]
+        read_only_fields = ["id", "driver_name", "created_at"]
 
 class SeekerDormRoomImageSerializer(serializers.ModelSerializer):
     """Expose dorm room images for seekers."""
