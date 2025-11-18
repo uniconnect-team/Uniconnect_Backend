@@ -8,7 +8,7 @@ from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import BookingRequest, Dorm, DormImage, DormRoom, DormRoomImage, Profile, CarpoolRide
+from .models import BookingRequest, Dorm, DormImage, DormRoom, DormRoomImage, Profile, CarpoolRide, CarpoolBooking
 from .serializers import (
     BookingRequestSerializer,
     DormImageSerializer,
@@ -26,6 +26,7 @@ from .serializers import (
     SeekerProfileCompletionSerializer,
     _build_user_payload,
     CarpoolRideSerializer,
+    CarpoolBookingSerializer,
 )
 
 
@@ -272,15 +273,90 @@ class OwnerBookingRequestViewSet(
             instance.responded_at = timezone.now()
             instance.save(update_fields=["responded_at", "updated_at"])
 
+from rest_framework.decorators import action
+
 class CarpoolRideViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = CarpoolRideSerializer
 
     def get_queryset(self):
-        return CarpoolRide.objects.all().select_related("driver__user")
+        qs = CarpoolRide.objects.all().select_related("driver__user").order_by("date", "time")
+
+        # Simple filters for search (optional, works with query params)
+        origin = self.request.query_params.get("origin")
+        destination = self.request.query_params.get("destination")
+
+        if origin:
+            qs = qs.filter(origin__icontains=origin)
+        if destination:
+            qs = qs.filter(destination__icontains=destination)
+
+        return qs
 
     def perform_create(self, serializer):
         serializer.save(driver=self.request.user.profile)
+
+    @action(detail=True, methods=["post"])
+    def book(self, request, pk=None):
+        ride = self.get_object()
+        profile = request.user.profile
+
+        # Check availability
+        if ride.seats_available < 1:
+            return Response({"detail": "No seats available"}, status=400)
+
+        from .models import CarpoolBooking
+
+        # Prevent double booking
+        if CarpoolBooking.objects.filter(ride=ride, user=profile).exists():
+            return Response({"detail": "You already booked this ride."}, status=400)
+
+        # Create booking record
+        CarpoolBooking.objects.create(ride=ride, user=profile)
+
+        # Decrement seat
+        ride.seats_available -= 1
+        ride.save(update_fields=["seats_available"])
+
+        return Response(
+            {"detail": "Seat booked!", "ride": CarpoolRideSerializer(ride).data},
+            status=200
+        )
+
+    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        ride = self.get_object()
+        profile = request.user.profile
+
+        from .models import CarpoolBooking
+
+        try:
+            booking = CarpoolBooking.objects.get(ride=ride, user=profile)
+        except CarpoolBooking.DoesNotExist:
+            return Response({"detail": "You have not booked this ride."}, status=400)
+
+        # Delete booking
+        booking.delete()
+
+        # Free seat
+        ride.seats_available += 1
+        ride.save(update_fields=["seats_available"])
+
+        return Response(
+            {"detail": "Booking cancelled.", "ride": CarpoolRideSerializer(ride).data},
+            status=200
+        )
+
+class CarpoolBookingViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CarpoolBookingSerializer
+
+    def get_queryset(self):
+        return CarpoolBooking.objects.filter(
+            user=self.request.user.profile
+        ).select_related("ride", "user")
+
 
 class SeekerDormViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     """Allow seekers to browse published dorms."""

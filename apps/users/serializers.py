@@ -26,6 +26,7 @@ from .models import (
     Property,
     UniversityDomain,
     CarpoolRide,
+    CarpoolBooking,
 )
 
 
@@ -681,16 +682,26 @@ class CarpoolRideSerializer(serializers.ModelSerializer):
         model = CarpoolRide
         fields = [
             "id",
-            "driver",
+            "driver",         # Keep it so frontend receives driver ID
             "driver_name",
             "origin",
             "destination",
             "date",
             "time",
+            "duration_minutes",
+            "vehicle_model",
             "seats_available",
             "created_at",
         ]
-        read_only_fields = ["id", "driver_name", "created_at"]
+        read_only_fields = ["id", "driver", "driver_name", "created_at"]
+
+class CarpoolBookingSerializer(serializers.ModelSerializer):
+    ride = CarpoolRideSerializer(read_only=True)
+
+    class Meta:
+        model = CarpoolBooking
+        fields = ["id", "ride", "booked_at"]
+
 
 class SeekerDormRoomImageSerializer(serializers.ModelSerializer):
     """Expose dorm room images for seekers."""
