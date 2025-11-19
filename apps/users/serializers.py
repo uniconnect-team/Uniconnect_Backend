@@ -13,7 +13,6 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
-
 from .models import (
     BookingRequest,
     Dorm,
@@ -24,7 +23,11 @@ from .models import (
     PendingRegistration,
     Profile,
     Property,
+    RoommateRequest,
     UniversityDomain,
+    RoommateProfile,      
+    RoommateMatch, 
+    RoommateRequest, 
 )
 
 
@@ -876,4 +879,156 @@ class SeekerBookingRequestCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data: Dict[str, Any]) -> BookingRequest:
         validated_data.pop("dorm", None)
         validated_data.setdefault("status", BookingRequest.Status.PENDING)
+        return super().create(validated_data)
+
+
+class RoommateProfileSerializer(serializers.ModelSerializer):
+    """Serializer for managing roommate profiles."""
+    
+    user_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = RoommateProfile
+        fields = (
+            "id",
+            "sleep_schedule",
+            "cleanliness_level",
+            "social_preference",
+            "study_habits",
+            "interests",
+            "budget_range",
+            "is_active",
+            "bio",
+            "user_info",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at", "user_info")
+    
+    def get_user_info(self, obj: RoommateProfile) -> dict[str, Any]:
+        """Return basic info about the user."""
+        profile = obj.profile
+        user = profile.user
+        return {
+            "id": profile.id,
+            "full_name": profile.full_name,
+            "university_domain": getattr(profile.university_domain, "domain", ""),
+        }
+    
+    def create(self, validated_data: Dict[str, Any]) -> RoommateProfile:
+        """Create roommate profile for the authenticated user."""
+        user = self.context["request"].user
+        profile = user.profile
+        validated_data["profile"] = profile
+        return super().create(validated_data)
+
+
+class RoommateMatchSerializer(serializers.ModelSerializer):
+    """Serializer for viewing roommate matches."""
+    
+    match_info = serializers.SerializerMethodField()
+    match_profile = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = RoommateMatch
+        fields = (
+            "id",
+            "compatibility_score",
+            "is_viewed",
+            "is_favorited",
+            "match_info",
+            "match_profile",
+            "created_at",
+        )
+        read_only_fields = ("id", "compatibility_score", "match_info", "match_profile", "created_at")
+    
+    def get_match_info(self, obj: RoommateMatch) -> dict[str, Any]:
+        """Return basic info about the matched user."""
+        profile = obj.match
+        user = profile.user
+        return {
+            "id": profile.id,
+            "full_name": profile.full_name,
+            "email": user.email,
+            "university_domain": getattr(profile.university_domain, "domain", ""),
+        }
+    
+    def get_match_profile(self, obj: RoommateMatch) -> Optional[dict[str, Any]]:
+        """Return roommate profile details of the match."""
+        try:
+            roommate_profile = obj.match.roommate_profile
+            return {
+                "sleep_schedule": roommate_profile.sleep_schedule,
+                "cleanliness_level": roommate_profile.cleanliness_level,
+                "social_preference": roommate_profile.social_preference,
+                "study_habits": roommate_profile.study_habits,
+                "interests": roommate_profile.interests,
+                "budget_range": roommate_profile.budget_range,
+                "bio": roommate_profile.bio,
+            }
+        except RoommateProfile.DoesNotExist:
+            return None
+
+
+class RoommateRequestSerializer(serializers.ModelSerializer):
+    """Serializer for sending and managing roommate requests."""
+    
+    sender_info = serializers.SerializerMethodField()
+    receiver_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = RoommateRequest
+        fields = (
+            "id",
+            "receiver",
+            "message",
+            "status",
+            "response_message",
+            "sender_info",
+            "receiver_info",
+            "responded_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "sender_info", "receiver_info", "responded_at", "created_at", "updated_at")
+    
+    def get_sender_info(self, obj: RoommateRequest) -> dict[str, Any]:
+        """Return sender profile info."""
+        profile = obj.sender
+        return {
+            "id": profile.id,
+            "full_name": profile.full_name,
+            "email": profile.user.email,
+        }
+    
+    def get_receiver_info(self, obj: RoommateRequest) -> dict[str, Any]:
+        """Return receiver profile info."""
+        profile = obj.receiver
+        return {
+            "id": profile.id,
+            "full_name": profile.full_name,
+            "email": profile.user.email,
+        }
+    
+    def validate_receiver(self, value: Profile) -> Profile:
+        """Ensure receiver is not the sender and is a seeker."""
+        user = self.context["request"].user
+        sender_profile = user.profile
+        
+        if value.id == sender_profile.id:
+            raise serializers.ValidationError("You cannot send a request to yourself.")
+        
+        if value.role != Profile.Roles.SEEKER:
+            raise serializers.ValidationError("Can only send requests to other seekers.")
+        
+        # Check if request already exists
+        if RoommateRequest.objects.filter(sender=sender_profile, receiver=value).exists():
+            raise serializers.ValidationError("You have already sent a request to this user.")
+        
+        return value
+    
+    def create(self, validated_data: Dict[str, Any]) -> RoommateRequest:
+        """Create a new roommate request."""
+        user = self.context["request"].user
+        validated_data["sender"] = user.profile
         return super().create(validated_data)
