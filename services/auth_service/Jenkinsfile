@@ -42,16 +42,18 @@ pipeline {
                 script {
                     def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
                     echo "Applying Kubernetes manifest: ${K8S_MANIFEST}"
-                    bat "kubectl apply -f ${K8S_MANIFEST}"
+                    // Use minikube's kubectl wrapper
+                    bat "minikube kubectl -- apply -f ${K8S_MANIFEST}"
 
                     echo "Updating deployment image to: ${imageTag}"
-                    bat "kubectl set image deployment/auth-service auth-service=${imageTag} --record"
+                    bat "minikube kubectl -- set image deployment/auth-service auth-service=${imageTag} --record"
 
                     echo "Waiting for rollout to complete..."
-                    bat "kubectl rollout status deployment/auth-service"
+                    bat "minikube kubectl -- rollout status deployment/auth-service"
                 }
             }
         }
+
     }
 
     post {
