@@ -1,0 +1,65 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME   = 'auth-service'
+        K8S_MANIFEST = 'k8s/auth-service.yaml'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    echo "Building Docker image: ${imageTag}"
+
+                    // Build context = repo root (Uniconnect_Backend)
+                    bat "docker build -t ${imageTag} -f services/auth_service/Dockerfile ."
+                }
+            }
+        }
+
+        stage('Load Image into Minikube') {
+            steps {
+                script {
+                    def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    echo "Loading image into Minikube: ${imageTag}"
+
+                    bat "minikube image load ${imageTag}"
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    echo "Applying Kubernetes manifest: ${K8S_MANIFEST}"
+                    bat "kubectl apply -f ${K8S_MANIFEST}"
+
+                    echo "Updating deployment image to: ${imageTag}"
+                    bat "kubectl set image deployment/auth-service auth-service=${imageTag} --record"
+
+                    echo "Waiting for rollout to complete..."
+                    bat "kubectl rollout status deployment/auth-service"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Auth service successfully built and deployed to Minikube! ✅"
+        }
+        failure {
+            echo "❌ Build or deployment failed. Check the stage logs above."
+        }
+    }
+}

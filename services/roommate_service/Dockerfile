@@ -12,15 +12,15 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy entire project (same way as your working services)
+COPY . .
+
+# Copy entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Explicitly copy the uniconnect folder
-COPY uniconnect/ /app/uniconnect/
-COPY apps/ /app/apps/
-COPY manage.py /app/
-
-ENV DJANGO_SETTINGS_MODULE=uniconnect.settings_roommate
+# Settings for roommate service
+ENV DJANGO_SETTINGS_MODULE=settings.roommate
 
 EXPOSE 8000
 
