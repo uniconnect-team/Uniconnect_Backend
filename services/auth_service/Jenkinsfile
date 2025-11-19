@@ -20,7 +20,6 @@ pipeline {
                     def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
                     echo "Building Docker image: ${imageTag}"
 
-                    // Build context = repo root (Uniconnect_Backend)
                     bat "docker build -t ${imageTag} -f services/auth_service/Dockerfile ."
                 }
             }
@@ -37,11 +36,22 @@ pipeline {
             }
         }
 
+        stage('Ensure Minikube is Running') {
+            steps {
+                script {
+                    echo "Checking Minikube status (starting it if needed)..."
+                    // In Windows CMD, "cmd1 || cmd2" = run cmd2 if cmd1 fails
+                    bat "minikube status || minikube start"
+                }
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 script {
                     def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
                     echo "Applying Kubernetes manifest: ${K8S_MANIFEST}"
+
                     // Use minikube's kubectl wrapper
                     bat "minikube kubectl -- apply -f ${K8S_MANIFEST}"
 
