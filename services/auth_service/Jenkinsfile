@@ -64,7 +64,19 @@ pipeline {
             }
         }
 
+        stage('Debug - Check User Context') {
+            steps {
+                script {
+                    echo "Checking Jenkins user context..."
+                    bat "whoami"
+                    bat "echo %USERPROFILE%"
+                    bat "dir %USERPROFILE%\\.minikube"
+                }
+            }
+        }
+
     }
+
 
     post {
         success {
@@ -74,4 +86,5 @@ pipeline {
             echo "❌ Build or deployment failed. Check the stage logs above."
         }
     }
+
 }
