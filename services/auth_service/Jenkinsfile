@@ -8,7 +8,7 @@ pipeline {
 
     stages {
 
-        stage('Debug - Check User Context') {
+        stage('Debug - User Context') {
             steps {
                 script {
                     echo "=== Checking Jenkins User Context ==="
@@ -19,7 +19,7 @@ pipeline {
             }
         }
 
-        stage('Debug - Check Minikube Config') {
+        stage('Debug - Minikube Config') {
             steps {
                 script {
                     echo "=== Checking Minikube Configuration ==="
@@ -35,7 +35,7 @@ pipeline {
             }
         }
 
-        stage('Debug - Check Docker Access') {
+        stage('Debug - Docker Access') {
             steps {
                 script {
                     echo "=== Checking Docker Access ==="
@@ -45,7 +45,7 @@ pipeline {
             }
         }
 
-        stage('Debug - Check Minikube Access') {
+        stage('Debug - Minikube Access') {
             steps {
                 script {
                     echo "=== Checking Minikube Access ==="
@@ -72,23 +72,21 @@ pipeline {
             }
         }
 
-        stage('Load Image into Minikube') {
+        stage('Ensure Minikube Running') {
             steps {
                 script {
-                    def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
-                    echo "Loading image into Minikube: ${imageTag}"
-
-                    bat "minikube image load ${imageTag}"
+                    echo "Ensuring Minikube is running..."
+                    bat "minikube status || minikube start"
                 }
             }
         }
 
-        stage('Ensure Minikube is Running') {
+        stage('Load Image to Minikube') {
             steps {
                 script {
-                    echo "Checking Minikube status (starting it if needed)..."
-                    // In Windows CMD, "cmd1 || cmd2" = run cmd2 if cmd1 fails
-                    bat "minikube status || minikube start"
+                    def imageTag = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    echo "Loading image into Minikube: ${imageTag}"
+                    bat "minikube image load ${imageTag}"
                 }
             }
         }
@@ -127,10 +125,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Auth service successfully built and deployed to Minikube!"
+            echo "✅ Auth service successfully built and deployed!"
         }
         failure {
-            echo "❌ Build or deployment failed. Check the stage logs above."
+            echo "❌ Build failed. Check the logs above."
         }
     }
 
