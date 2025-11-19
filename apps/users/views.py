@@ -308,11 +308,11 @@ class CarpoolRideViewSet(viewsets.ModelViewSet):
         from .models import CarpoolBooking
 
         # Prevent double booking
-        if CarpoolBooking.objects.filter(ride=ride, user=profile).exists():
+        if CarpoolBooking.objects.filter(ride=ride, rider=profile).exists():
             return Response({"detail": "You already booked this ride."}, status=400)
 
         # Create booking record
-        CarpoolBooking.objects.create(ride=ride, user=profile)
+        CarpoolBooking.objects.create(ride=ride, rider=profile)
 
         # Decrement seat
         ride.seats_available -= 1
@@ -332,7 +332,7 @@ class CarpoolRideViewSet(viewsets.ModelViewSet):
         from .models import CarpoolBooking
 
         try:
-            booking = CarpoolBooking.objects.get(ride=ride, user=profile)
+            booking = CarpoolBooking.objects.get(ride=ride, rider=profile)
         except CarpoolBooking.DoesNotExist:
             return Response({"detail": "You have not booked this ride."}, status=400)
 
