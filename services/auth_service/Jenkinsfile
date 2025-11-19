@@ -8,6 +8,53 @@ pipeline {
 
     stages {
 
+        stage('Debug - Check User Context') {
+            steps {
+                script {
+                    echo "=== Checking Jenkins User Context ==="
+                    bat "whoami"
+                    bat "echo Current User Profile: %USERPROFILE%"
+                    bat "echo Jenkins Home: %JENKINS_HOME%"
+                }
+            }
+        }
+
+        stage('Debug - Check Minikube Config') {
+            steps {
+                script {
+                    echo "=== Checking Minikube Configuration ==="
+                    bat """
+                        echo Checking for .minikube folder...
+                        dir %USERPROFILE%\\.minikube 2>nul || echo .minikube folder NOT FOUND in %USERPROFILE%
+                        
+                        echo.
+                        echo Checking for .kube folder...
+                        dir %USERPROFILE%\\.kube 2>nul || echo .kube folder NOT FOUND in %USERPROFILE%
+                    """
+                }
+            }
+        }
+
+        stage('Debug - Check Docker Access') {
+            steps {
+                script {
+                    echo "=== Checking Docker Access ==="
+                    bat "docker --version"
+                    bat "docker ps"
+                }
+            }
+        }
+
+        stage('Debug - Check Minikube Access') {
+            steps {
+                script {
+                    echo "=== Checking Minikube Access ==="
+                    bat "minikube version"
+                    bat "minikube status || echo Minikube status check failed"
+                }
+            }
+        }
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -56,7 +103,7 @@ pipeline {
                     bat "minikube kubectl -- apply -f ${K8S_MANIFEST}"
 
                     echo "Updating deployment image to: ${imageTag}"
-                    bat "minikube kubectl -- set image deployment/auth-service auth-service=${imageTag} --record"
+                    bat "minikube kubectl -- set image deployment/auth-service auth-service=${imageTag}"
 
                     echo "Waiting for rollout to complete..."
                     bat "minikube kubectl -- rollout status deployment/auth-service"
@@ -80,7 +127,7 @@ pipeline {
 
     post {
         success {
-            echo "Auth service successfully built and deployed to Minikube! ✅"
+            echo "✅ Auth service successfully built and deployed to Minikube!"
         }
         failure {
             echo "❌ Build or deployment failed. Check the stage logs above."
