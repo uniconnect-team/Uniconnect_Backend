@@ -1,0 +1,74 @@
+pipeline {
+    agent any
+
+    options {
+        skipStagesAfterUnstable()
+        timestamps()
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build dorm-service image') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh """
+                            set -e
+                            docker build -f services/dorm_service/Dockerfile -t dorm-service:latest .
+                        """
+                    } else {
+                        bat """
+                            docker build -f services/dorm_service/Dockerfile -t dorm-service:latest .
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Load into Minikube') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh """
+                            set -e
+                            minikube image load dorm-service:latest
+                        """
+                    } else {
+                        bat """
+                            minikube image load dorm-service:latest
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh """
+                            set -e
+                            minikube kubectl -- apply -f k8s/dorm-service.yaml
+                        """
+                    } else {
+                        bat """
+                            REM Use minikube's kubectl wrapper so the correct cluster/context is used
+                            minikube kubectl -- apply -f k8s/dorm-service.yaml
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
