@@ -7,6 +7,8 @@ from rest_framework import generics, mixins, status, viewsets
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.decorators import action
+
 
 from .models import BookingRequest, Dorm, DormImage, DormRoom, DormRoomImage, Profile, CarpoolRide, CarpoolBooking
 from .serializers import (
@@ -20,6 +22,9 @@ from .serializers import (
     OwnerProfileCompletionSerializer,
     OwnerRegisterSerializer,
     RegisterSerializer,
+    RoommateMatchSerializer,
+    RoommateProfileSerializer,
+    RoommateRequestSerializer,
     SeekerBookingRequestCreateSerializer,
     SeekerBookingRequestSerializer,
     SeekerDormSerializer,
@@ -27,6 +32,9 @@ from .serializers import (
     _build_user_payload,
     CarpoolRideSerializer,
     CarpoolBookingSerializer,
+    RoommateProfile,      
+    RoommateMatch,        
+    RoommateRequest, 
 )
 
 
@@ -534,3 +542,263 @@ class NotificationListView(APIView):
             "count": len(notifications),
             "results": notifications,
         })
+
+class RoommateProfileViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Manage the authenticated user's roommate profile."""
+    
+    serializer_class = RoommateProfileSerializer
+    permission_classes = [IsAuthenticated, IsSeekerProfile]
+    
+    def get_queryset(self):
+        """Return only the authenticated user's profile."""
+        return RoommateProfile.objects.filter(profile=self.request.user.profile)
+    
+    def get_object(self):
+        """Get or create the roommate profile for the authenticated user."""
+        profile = self.request.user.profile
+        roommate_profile, created = RoommateProfile.objects.get_or_create(profile=profile)
+        return roommate_profile
+    
+    def retrieve(self, request, *args, **kwargs):
+        """Get the authenticated user's roommate profile."""
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+    
+    def update(self, request, *args, **kwargs):
+        """Update the authenticated user's roommate profile."""
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)
+
+
+class RoommateMatchViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """Browse potential roommate matches."""
+    
+    serializer_class = RoommateMatchSerializer
+    permission_classes = [IsAuthenticated, IsSeekerProfile]
+    
+    def get_queryset(self):
+        """Return matches for the authenticated user, ordered by compatibility."""
+        profile = self.request.user.profile
+        
+        # Get filter parameters
+        min_score = self.request.query_params.get("min_score", 50)
+        favorited_only = self.request.query_params.get("favorited", "").lower() == "true"
+        
+        queryset = RoommateMatch.objects.filter(seeker=profile)
+        
+        if min_score:
+            try:
+                queryset = queryset.filter(compatibility_score__gte=int(min_score))
+            except ValueError:
+                pass
+        
+        if favorited_only:
+            queryset = queryset.filter(is_favorited=True)
+        
+        return queryset.select_related("match", "match__user", "match__roommate_profile")
+    
+    def list(self, request, *args, **kwargs):
+        """
+        List roommate matches for the authenticated user.
+        Automatically generates matches if none exist.
+        """
+        profile = request.user.profile
+        
+        # Ensure user has a roommate profile
+        try:
+            my_roommate_profile = profile.roommate_profile
+        except RoommateProfile.DoesNotExist:
+            return Response(
+                {"detail": "Please create your roommate profile first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Check if matches need to be generated
+        existing_matches = RoommateMatch.objects.filter(seeker=profile).count()
+        
+        if existing_matches == 0:
+            # Generate matches
+            self._generate_matches(profile, my_roommate_profile)
+        
+        return super().list(request, *args, **kwargs)
+    
+    def _generate_matches(self, seeker_profile: Profile, seeker_roommate_profile: RoommateProfile):
+        """Generate compatibility matches for a seeker."""
+        # Find all other active roommate profiles (excluding self)
+        other_profiles = RoommateProfile.objects.filter(
+            is_active=True,
+            profile__role=Profile.Roles.SEEKER,
+        ).exclude(profile=seeker_profile).select_related("profile", "profile__user")
+        
+        matches_to_create = []
+        
+        for other_roommate_profile in other_profiles:
+            # Calculate compatibility
+            score = seeker_roommate_profile.calculate_compatibility(other_roommate_profile)
+            
+            # Only create match if score is above threshold (e.g., 25%)
+            if score >= 25:
+                matches_to_create.append(
+                    RoommateMatch(
+                        seeker=seeker_profile,
+                        match=other_roommate_profile.profile,
+                        compatibility_score=score,
+                    )
+                )
+        
+        # Bulk create matches
+        RoommateMatch.objects.bulk_create(matches_to_create, ignore_conflicts=True)
+    
+    @action(detail=True, methods=["post"])
+    def toggle_favorite(self, request, pk=None):
+        """Toggle favorite status for a match."""
+        match = self.get_object()
+        match.is_favorited = not match.is_favorited
+        match.save(update_fields=["is_favorited", "updated_at"])
+        serializer = self.get_serializer(match)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=["post"])
+    def mark_viewed(self, request, pk=None):
+        """Mark a match as viewed."""
+        match = self.get_object()
+        if not match.is_viewed:
+            match.is_viewed = True
+            match.save(update_fields=["is_viewed", "updated_at"])
+        serializer = self.get_serializer(match)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=["post"])
+    def refresh_matches(self, request):
+        """Regenerate all matches for the authenticated user."""
+        profile = request.user.profile
+        
+        try:
+            my_roommate_profile = profile.roommate_profile
+        except RoommateProfile.DoesNotExist:
+            return Response(
+                {"detail": "Please create your roommate profile first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Delete existing matches
+        RoommateMatch.objects.filter(seeker=profile).delete()
+        
+        # Generate new matches
+        self._generate_matches(profile, my_roommate_profile)
+        
+        return Response({"detail": "Matches refreshed successfully."})
+
+
+class RoommateRequestViewSet(viewsets.ModelViewSet):
+    """Send and manage roommate connection requests."""
+    
+    serializer_class = RoommateRequestSerializer
+    permission_classes = [IsAuthenticated, IsSeekerProfile]
+    
+    def get_queryset(self):
+        """Return requests sent by or to the authenticated user."""
+        profile = self.request.user.profile
+        
+        # Filter: sent, received, or all
+        filter_type = self.request.query_params.get("type", "all")
+        status_filter = self.request.query_params.get("status")
+        
+        if filter_type == "sent":
+            queryset = RoommateRequest.objects.filter(sender=profile)
+        elif filter_type == "received":
+            queryset = RoommateRequest.objects.filter(receiver=profile)
+        else:
+            queryset = RoommateRequest.objects.filter(
+                Q(sender=profile) | Q(receiver=profile)
+            )
+        
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        return queryset.select_related("sender", "receiver", "sender__user", "receiver__user")
+    
+    @action(detail=True, methods=["post"])
+    def accept(self, request, pk=None):
+        """Accept a received roommate request."""
+        roommate_request = self.get_object()
+        
+        # Ensure user is the receiver
+        if roommate_request.receiver != request.user.profile:
+            return Response(
+                {"detail": "You can only accept requests sent to you."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
+        if roommate_request.status != RoommateRequest.Status.PENDING:
+            return Response(
+                {"detail": "This request has already been responded to."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        roommate_request.status = RoommateRequest.Status.ACCEPTED
+        roommate_request.response_message = request.data.get("response_message", "")
+        roommate_request.responded_at = timezone.now()
+        roommate_request.save()
+        
+        serializer = self.get_serializer(roommate_request)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=["post"])
+    def decline(self, request, pk=None):
+        """Decline a received roommate request."""
+        roommate_request = self.get_object()
+        
+        # Ensure user is the receiver
+        if roommate_request.receiver != request.user.profile:
+            return Response(
+                {"detail": "You can only decline requests sent to you."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
+        if roommate_request.status != RoommateRequest.Status.PENDING:
+            return Response(
+                {"detail": "This request has already been responded to."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        roommate_request.status = RoommateRequest.Status.DECLINED
+        roommate_request.response_message = request.data.get("response_message", "")
+        roommate_request.responded_at = timezone.now()
+        roommate_request.save()
+        
+        serializer = self.get_serializer(roommate_request)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        """Cancel a sent roommate request."""
+        roommate_request = self.get_object()
+        
+        # Ensure user is the sender
+        if roommate_request.sender != request.user.profile:
+            return Response(
+                {"detail": "You can only cancel requests you sent."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
+        if roommate_request.status != RoommateRequest.Status.PENDING:
+            return Response(
+                {"detail": "Cannot cancel a request that has been responded to."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        roommate_request.status = RoommateRequest.Status.CANCELLED
+        roommate_request.save()
+        
+        serializer = self.get_serializer(roommate_request)
+        return Response(serializer.data)

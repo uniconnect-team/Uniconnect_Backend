@@ -11,7 +11,10 @@ from .models import (
     DormRoomImage,
     Profile,
     Property,
+    RoommateRequest,
     UniversityDomain,
+    RoommateProfile,
+    RoommateMatch,
 )
 
 
@@ -104,3 +107,50 @@ class BookingRequestAdmin(admin.ModelAdmin):
     list_filter = ("status",)
     search_fields = ("seeker_name", "seeker_email", "room__name")
     autocomplete_fields = ("room",)
+
+
+@admin.register(RoommateProfile)
+class RoommateProfileAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "profile",
+        "sleep_schedule",
+        "cleanliness_level",
+        "social_preference",
+        "is_active",
+        "created_at",
+    )
+    list_filter = ("is_active", "sleep_schedule", "cleanliness_level", "social_preference")
+    search_fields = ("profile__user__username", "profile__full_name", "interests", "bio")
+    autocomplete_fields = ("profile",)
+
+
+@admin.register(RoommateMatch)
+class RoommateMatchAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "seeker",
+        "match",
+        "compatibility_score",
+        "is_viewed",
+        "is_favorited",
+        "created_at",
+    )
+    list_filter = ("is_viewed", "is_favorited")
+    search_fields = ("seeker__user__username", "match__user__username")
+    autocomplete_fields = ("seeker", "match")
+
+
+@admin.register(RoommateRequest)
+class RoommateRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "sender",
+        "receiver",
+        "status",
+        "created_at",
+        "responded_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("sender__user__username", "receiver__user__username", "message")
+    autocomplete_fields = ("sender", "receiver")

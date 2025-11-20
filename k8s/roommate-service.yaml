@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roommate-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: roommate-service
+  template:
+    metadata:
+      labels:
+        app: roommate-service
+    spec:
+      containers:
+        - name: roommate-service
+          image: roommate-service:latest
+          imagePullPolicy: Never
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: uniconnect.settings_roommate
+            - name: DATABASE_PATH
+              value: /shared-data/db.sqlite3
+            - name: DJANGO_DEBUG
+              value: "True"
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: media-storage
+              mountPath: /app/media
+            - name: shared-db
+              mountPath: /shared-data
+      volumes:
+        - name: media-storage
+          emptyDir: {}
+        - name: shared-db
+          persistentVolumeClaim:
+            claimName: uniconnect-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: roommate-service
+spec:
+  selector:
+    app: roommate-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP
