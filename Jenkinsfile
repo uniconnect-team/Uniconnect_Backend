@@ -53,11 +53,13 @@ pipeline {
                     if (isUnix()) {
                         sh """
                             set -e
-                            kubectl apply -f k8s/auth-service.yaml
+                            # Use minikube's kubectl wrapper so the correct cluster/context is used
+                            minikube kubectl -- apply -f k8s/auth-service.yaml
                         """
                     } else {
                         bat """
-                            kubectl apply -f k8s/auth-service.yaml
+                            REM Use minikube's kubectl wrapper so the correct cluster/context is used
+                            minikube kubectl -- apply -f k8s/auth-service.yaml
                         """
                     }
                 }
