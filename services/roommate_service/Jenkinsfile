@@ -53,6 +53,7 @@ pipeline {
                     if (isUnix()) {
                         sh """
                             set -e
+                            # Use minikube's kubectl wrapper so the correct cluster/context is used
                             minikube kubectl -- apply -f k8s/roommate-service.yaml
                         """
                     } else {
