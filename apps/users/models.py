@@ -242,6 +242,41 @@ class DormRoom(models.Model):
     def __str__(self) -> str:  # pragma: no cover
         return f"DormRoom(name={self.name}, dorm={self.dorm_id})"
 
+class CarpoolRide(models.Model):
+    driver = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="carpool_rides")
+    origin = models.CharField(max_length=255)
+    destination = models.CharField(max_length=255)
+    date = models.DateField()
+    time = models.TimeField()
+    # NEW FIELDS
+    duration_minutes = models.PositiveIntegerField(null=True, blank=True)
+    vehicle_model = models.CharField(max_length=255, blank=True)
+
+    seats_available = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.origin} → {self.destination} by {self.driver.full_name}"
+
+class CarpoolBooking(models.Model):
+    ride = models.ForeignKey(
+        CarpoolRide,
+        on_delete=models.CASCADE,
+        related_name="bookings"
+    )
+    rider = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name="carpool_bookings"
+    )
+    booked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-booked_at"]
+        unique_together = ("ride", "rider")  # prevent double booking
+
+    def __str__(self):
+        return f"{self.rider.full_name} booked {self.ride}"
 
 class DormRoomImage(models.Model):
     """Gallery images for specific dorm rooms."""

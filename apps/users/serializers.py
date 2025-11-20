@@ -25,6 +25,8 @@ from .models import (
     Property,
     RoommateRequest,
     UniversityDomain,
+    CarpoolRide,
+    CarpoolBooking,
     RoommateProfile,      
     RoommateMatch, 
     RoommateRequest, 
@@ -675,6 +677,33 @@ class BookingRequestSerializer(serializers.ModelSerializer):
             instance.responded_at = timezone.now()
             instance.save(update_fields=["responded_at", "status", "owner_note", "updated_at"])
         return instance
+
+class CarpoolRideSerializer(serializers.ModelSerializer):
+    driver_name = serializers.CharField(source="driver.full_name", read_only=True)
+
+    class Meta:
+        model = CarpoolRide
+        fields = [
+            "id",
+            "driver",         # Keep it so frontend receives driver ID
+            "driver_name",
+            "origin",
+            "destination",
+            "date",
+            "time",
+            "duration_minutes",
+            "vehicle_model",
+            "seats_available",
+            "created_at",
+        ]
+        read_only_fields = ["id", "driver", "driver_name", "created_at"]
+
+class CarpoolBookingSerializer(serializers.ModelSerializer):
+    ride = CarpoolRideSerializer(read_only=True)
+
+    class Meta:
+        model = CarpoolBooking
+        fields = ["id", "ride", "booked_at"]
 
 
 class SeekerDormRoomImageSerializer(serializers.ModelSerializer):
