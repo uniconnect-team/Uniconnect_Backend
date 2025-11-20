@@ -29,6 +29,40 @@ pipeline {
                 }
             }
         }
+
+        stage('Load into Minikube') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh """
+                            set -e
+                            minikube image load auth-service:latest
+                        """
+                    } else {
+                        bat """
+                            minikube image load auth-service:latest
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh """
+                            set -e
+                            kubectl apply -f k8s/auth-service.yaml
+                        """
+                    } else {
+                        bat """
+                            kubectl apply -f k8s/auth-service.yaml
+                        """
+                    }
+                }
+            }
+        }
     }
 
     post {
