@@ -95,6 +95,32 @@ minikube service auth-service --url
 
 Follow the same pattern for the other services (`profile-service`, `dorm-service`, `booking-service`, `notification-service`).
 
+## Ingress routing with NGINX
+
+To avoid reaching each microservice through a unique NodePort, enable the NGINX Ingress controller and apply the shared ingress
+resource:
+
+```bash
+minikube addons enable ingress
+kubectl apply -f k8s/ingress.yaml
+```
+
+Add `uniconnect.local` to your `/etc/hosts` so traffic resolves to Minikube (the IP from `minikube ip`). All requests from the
+frontend can then target a single base URL (for example, `http://uniconnect.local`) and the ingress will forward paths to the
+correct service:
+
+- `/api/v1/auth/` → `auth-service`
+- `/api/v1/carpooling/` → `carpooling-service`
+- `/api/users/owner/booking-requests/` and `/api/users/seeker/booking-requests/` → `booking-service`
+- `/api/users/owner/dorms/`, `/api/users/owner/dorm-rooms/`, `/api/users/owner/dorm-images/`, `/api/users/owner/dorm-room-images/`, `/api/users/seeker/dorms/` → `dorm-service`
+- `/api/users/notifications/` → `notification-service`
+- `/api/users/me/` and `/api/users/complete-profile/` → `profile-service`
+- `/api/roommate/` → `roommate-service`
+- `/api/v1/home/` (and other `/api/v1/` core endpoints) → `auth-service`
+
+After the controller provisions a load balancer (or Minikube sets up the ingress tunnel), the frontend only needs to call these
+paths without knowing the individual pod ports.
+
 ## Requirements
 
 Dependencies for all services live in `requirements.txt`. Install them locally with:
