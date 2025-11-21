@@ -1,0 +1,164 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: uniconnect-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: uniconnect.local
+      http:
+        paths:
+          # Authentication Service
+          - path: /api/v1/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 80
+          
+          # Core Service
+          - path: /api/v1/home
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 80
+          
+          # Profile Service
+          - path: /api/users/me
+            pathType: Prefix
+            backend:
+              service:
+                name: profile-service
+                port:
+                  number: 80
+          
+          - path: /api/users/complete-profile
+            pathType: Prefix
+            backend:
+              service:
+                name: profile-service
+                port:
+                  number: 80
+          
+          # Booking Service (must come before dorm-service)
+          - path: /api/users/owner/booking-requests
+            pathType: Prefix
+            backend:
+              service:
+                name: booking-service
+                port:
+                  number: 80
+          
+          - path: /api/users/seeker/booking-requests
+            pathType: Prefix
+            backend:
+              service:
+                name: booking-service
+                port:
+                  number: 80
+          
+          # Dorm Service (Owner)
+          - path: /api/users/owner/dorm-room-images
+            pathType: Prefix
+            backend:
+              service:
+                name: dorm-service
+                port:
+                  number: 80
+          
+          - path: /api/users/owner/dorm-rooms
+            pathType: Prefix
+            backend:
+              service:
+                name: dorm-service
+                port:
+                  number: 80
+          
+          - path: /api/users/owner/dorm-images
+            pathType: Prefix
+            backend:
+              service:
+                name: dorm-service
+                port:
+                  number: 80
+          
+          - path: /api/users/owner/dorms
+            pathType: Prefix
+            backend:
+              service:
+                name: dorm-service
+                port:
+                  number: 80
+          
+          # Dorm Service (Seeker)
+          - path: /api/users/seeker/dorms
+            pathType: Prefix
+            backend:
+              service:
+                name: dorm-service
+                port:
+                  number: 80
+          
+          # Notification Service
+          - path: /api/users/notifications
+            pathType: Prefix
+            backend:
+              service:
+                name: notification-service
+                port:
+                  number: 80
+          
+          # Carpooling Service - Rides
+          - path: /api/v1/carpooling/rides
+            pathType: Prefix
+            backend:
+              service:
+                name: carpooling-service
+                port:
+                  number: 80
+          
+          # Carpooling Service - Bookings (through carpooling service)
+          - path: /api/users/carpooling/bookings
+            pathType: Prefix
+            backend:
+              service:
+                name: carpooling-service
+                port:
+                  number: 80
+          
+          # Carpooling Service - Alternative endpoint
+          - path: /api/users/carpool-rides
+            pathType: Prefix
+            backend:
+              service:
+                name: carpooling-service
+                port:
+                  number: 80
+          
+          # Roommate Service
+          - path: /api/roommate/profile
+            pathType: Prefix
+            backend:
+              service:
+                name: roommate-service
+                port:
+                  number: 80
+          
+          - path: /api/roommate/matches
+            pathType: Prefix
+            backend:
+              service:
+                name: roommate-service
+                port:
+                  number: 80
+          
+          - path: /api/roommate/requests
+            pathType: Prefix
+            backend:
+              service:
+                name: roommate-service
+                port:
+                  number: 80
